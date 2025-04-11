@@ -1,5 +1,0 @@
-defaultBaseImage: gcr.io/distroless/static:nonroot
-baseImageOverrides:
-  # git-init uses a base image that includes Git, and supports running either
-  # as root or as user nonroot with UID 65532.
-  github.com/tektoncd/pipeline/cmd/git-init: ghcr.io/distroless/git

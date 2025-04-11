@@ -26,7 +26,6 @@ import (
 	"testing"
 
 	"github.com/tektoncd/pipeline/test/parse"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
@@ -62,8 +61,13 @@ func TestSidecarTaskSupport(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.desc, func(t *testing.T) {
+			// If Kubernetes Sidecar support is enabled the Pod will terminate and it gets caught as an error though it's expected
+			ff := getFeatureFlagsBaseOnAPIFlag(t)
+
+			if ff.EnableKubernetesSidecar {
+				t.SkipNow()
+			}
 			t.Parallel()
 
 			ctx, cancel := context.WithCancel(ctx)
@@ -74,46 +78,46 @@ func TestSidecarTaskSupport(t *testing.T) {
 
 			sidecarTaskName := helpers.ObjectNameForTest(t)
 			sidecarTaskRunName := helpers.ObjectNameForTest(t)
-			task := parse.MustParseTask(t, fmt.Sprintf(`
+			task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   steps:
   - name: %s
-    image: busybox
+    image: mirror.gcr.io/busybox
     command: [%s]
   sidecars:
   - name: %s
-    image: busybox
+    image: mirror.gcr.io/busybox
     command: [%s]
 `, sidecarTaskName, namespace, primaryContainerName, stringSliceToYAMLArray(test.stepCommand), sidecarContainerName, stringSliceToYAMLArray(test.sidecarCommand)))
 
-			taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+			taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   taskRef:
     name: %s
-  timeout: 1m
+  timeout: 2m
 `, sidecarTaskRunName, namespace, sidecarTaskName))
 
 			t.Logf("Creating Task %q", sidecarTaskName)
-			if _, err := clients.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+			if _, err := clients.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Failed to create Task %q: %v", sidecarTaskName, err)
 			}
 
 			t.Logf("Creating TaskRun %q", sidecarTaskRunName)
-			if _, err := clients.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+			if _, err := clients.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Failed to create TaskRun %q: %v", sidecarTaskRunName, err)
 			}
 
-			if err := WaitForTaskRunState(ctx, clients, sidecarTaskRunName, Succeed(sidecarTaskRunName), "TaskRunSucceed"); err != nil {
+			if err := WaitForTaskRunState(ctx, clients, sidecarTaskRunName, Succeed(sidecarTaskRunName), "TaskRunSucceed", v1Version); err != nil {
 				t.Fatalf("Error waiting for TaskRun %q to finish: %v", sidecarTaskRunName, err)
 			}
 
-			tr, err := clients.TaskRunClient.Get(ctx, sidecarTaskRunName, metav1.GetOptions{})
+			tr, err := clients.V1TaskRunClient.Get(ctx, sidecarTaskRunName, metav1.GetOptions{})
 			if err != nil {
 				t.Fatalf("Error getting Taskrun: %v", err)
 			}
@@ -140,14 +144,14 @@ spec:
 			sidecarTerminated := false
 
 			for _, c := range pod.Status.ContainerStatuses {
-				if c.Name == fmt.Sprintf("step-%s", primaryContainerName) {
+				if c.Name == "step-"+primaryContainerName {
 					if c.State.Terminated == nil || c.State.Terminated.Reason != "Completed" {
 						t.Errorf("Primary container has nil Terminated state or did not complete successfully. Actual Terminated state: %v", c.State.Terminated)
 					} else {
 						primaryTerminated = true
 					}
 				}
-				if c.Name == fmt.Sprintf("sidecar-%s", sidecarContainerName) {
+				if c.Name == "sidecar-"+sidecarContainerName {
 					if c.State.Terminated == nil {
 						t.Errorf("Sidecar container has a nil Terminated status but non-nil is expected.")
 					} else {
@@ -160,7 +164,7 @@ spec:
 				t.Errorf("Either the primary or sidecar containers did not terminate")
 			}
 
-			trCheckSidecarStatus, err := clients.TaskRunClient.Get(ctx, sidecarTaskRunName, metav1.GetOptions{})
+			trCheckSidecarStatus, err := clients.V1TaskRunClient.Get(ctx, sidecarTaskRunName, metav1.GetOptions{})
 			if err != nil {
 				t.Fatalf("Error getting TaskRun: %v", err)
 			}
@@ -168,7 +172,7 @@ spec:
 			sidecarFromStatus := trCheckSidecarStatus.Status.Sidecars[0]
 
 			// Check if Sidecar ContainerName is present for SidecarStatus
-			if sidecarFromStatus.ContainerName != fmt.Sprintf("sidecar-%s", sidecarContainerName) {
+			if sidecarFromStatus.Container != "sidecar-"+sidecarContainerName {
 				t.Errorf("Sidecar ContainerName should be: %s", sidecarContainerName)
 			}
 

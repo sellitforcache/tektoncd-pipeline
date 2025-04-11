@@ -36,8 +36,11 @@ func TestNewMetricsFromConfigMap(t *testing.T) {
 			expectedConfig: &config.Metrics{
 				TaskrunLevel:            config.TaskrunLevelAtTaskrun,
 				PipelinerunLevel:        config.PipelinerunLevelAtPipelinerun,
+				RunningPipelinerunLevel: config.DefaultRunningPipelinerunLevel,
 				DurationTaskrunType:     config.DurationPipelinerunTypeHistogram,
 				DurationPipelinerunType: config.DurationPipelinerunTypeHistogram,
+				CountWithReason:         false,
+				ThrottleWithNamespace:   false,
 			},
 			fileName: config.GetMetricsConfigName(),
 		},
@@ -45,10 +48,37 @@ func TestNewMetricsFromConfigMap(t *testing.T) {
 			expectedConfig: &config.Metrics{
 				TaskrunLevel:            config.TaskrunLevelAtNS,
 				PipelinerunLevel:        config.PipelinerunLevelAtNS,
+				RunningPipelinerunLevel: config.PipelinerunLevelAtNS,
 				DurationTaskrunType:     config.DurationTaskrunTypeHistogram,
 				DurationPipelinerunType: config.DurationPipelinerunTypeLastValue,
+				CountWithReason:         false,
+				ThrottleWithNamespace:   false,
 			},
 			fileName: "config-observability-namespacelevel",
+		},
+		{
+			expectedConfig: &config.Metrics{
+				TaskrunLevel:            config.TaskrunLevelAtNS,
+				PipelinerunLevel:        config.PipelinerunLevelAtNS,
+				RunningPipelinerunLevel: config.DefaultRunningPipelinerunLevel,
+				DurationTaskrunType:     config.DurationTaskrunTypeHistogram,
+				DurationPipelinerunType: config.DurationPipelinerunTypeLastValue,
+				CountWithReason:         true,
+				ThrottleWithNamespace:   false,
+			},
+			fileName: "config-observability-reason",
+		},
+		{
+			expectedConfig: &config.Metrics{
+				TaskrunLevel:            config.TaskrunLevelAtNS,
+				PipelinerunLevel:        config.PipelinerunLevelAtNS,
+				RunningPipelinerunLevel: config.PipelinerunLevelAtPipeline,
+				DurationTaskrunType:     config.DurationTaskrunTypeHistogram,
+				DurationPipelinerunType: config.DurationPipelinerunTypeLastValue,
+				CountWithReason:         true,
+				ThrottleWithNamespace:   true,
+			},
+			fileName: "config-observability-throttle",
 		},
 	}
 
@@ -62,16 +92,20 @@ func TestNewMetricsFromEmptyConfigMap(t *testing.T) {
 	expectedConfig := &config.Metrics{
 		TaskrunLevel:            config.TaskrunLevelAtTask,
 		PipelinerunLevel:        config.PipelinerunLevelAtPipeline,
+		RunningPipelinerunLevel: config.DefaultRunningPipelinerunLevel,
 		DurationTaskrunType:     config.DurationPipelinerunTypeHistogram,
 		DurationPipelinerunType: config.DurationPipelinerunTypeHistogram,
+		CountWithReason:         false,
+		ThrottleWithNamespace:   false,
 	}
 	verifyConfigFileWithExpectedMetricsConfig(t, MetricsConfigEmptyName, expectedConfig)
 }
 
 func verifyConfigFileWithExpectedMetricsConfig(t *testing.T, fileName string, expectedConfig *config.Metrics) {
+	t.Helper()
 	cm := test.ConfigMapFromTestFile(t, fileName)
 	if ab, err := config.NewMetricsFromConfigMap(cm); err == nil {
-		if d := cmp.Diff(ab, expectedConfig); d != "" {
+		if d := cmp.Diff(expectedConfig, ab); d != "" {
 			t.Errorf("Diff:\n%s", diff.PrintWantGot(d))
 		}
 	} else {

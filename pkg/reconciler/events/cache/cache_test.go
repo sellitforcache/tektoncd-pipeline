@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package cache
+package cache_test
 
 import (
 	"net/url"
@@ -22,12 +22,12 @@ import (
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	lru "github.com/hashicorp/golang-lru"
-
 	"github.com/cloudevents/sdk-go/v2/event"
 	cetypes "github.com/cloudevents/sdk-go/v2/types"
 	"github.com/google/go-cmp/cmp"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	lru "github.com/hashicorp/golang-lru"
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	cache "github.com/tektoncd/pipeline/pkg/reconciler/events/cache"
 	"github.com/tektoncd/pipeline/test/diff"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -36,8 +36,8 @@ func strptr(s string) *string { return &s }
 
 func getEventData(run interface{}) map[string]interface{} {
 	cloudEventData := map[string]interface{}{}
-	if v, ok := run.(*v1alpha1.Run); ok {
-		cloudEventData["run"] = v
+	if v, ok := run.(*v1beta1.CustomRun); ok {
+		cloudEventData["customRun"] = v
 	}
 	return cloudEventData
 }
@@ -58,18 +58,18 @@ func getEventToTest(eventtype string, run interface{}) *event.Event {
 	return &e
 }
 
-func getRunByMeta(name string, namespace string) *v1alpha1.Run {
-	return &v1alpha1.Run{
+func getCustomRunByMeta(name string, namespace string) *v1beta1.CustomRun {
+	return &v1beta1.CustomRun{
 		TypeMeta: metav1.TypeMeta{
-			Kind:       "Run",
-			APIVersion: "v1alpha1",
+			Kind:       "CustomRun",
+			APIVersion: "v1beta1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec:   v1alpha1.RunSpec{},
-		Status: v1alpha1.RunStatus{},
+		Spec:   v1beta1.CustomRunSpec{},
+		Status: v1beta1.CustomRunStatus{},
 	}
 }
 
@@ -82,10 +82,10 @@ func TestEventsKey(t *testing.T) {
 		wantKey   string
 		wantErr   bool
 	}{{
-		name:      "run event",
+		name:      "customrun event",
 		eventtype: "my.test.run.event",
-		run:       getRunByMeta("myrun", "mynamespace"),
-		wantKey:   "my.test.run.event/run/mynamespace/myrun",
+		run:       getCustomRunByMeta("myrun", "mynamespace"),
+		wantKey:   "my.test.run.event/customrun/mynamespace/myrun",
 		wantErr:   false,
 	}, {
 		name:      "run event missing data",
@@ -98,7 +98,7 @@ func TestEventsKey(t *testing.T) {
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			gotEvent := getEventToTest(tc.eventtype, tc.run)
-			gotKey, err := EventKey(gotEvent)
+			gotKey, err := cache.EventKey(gotEvent)
 			if err != nil {
 				if !tc.wantErr {
 					t.Fatalf("Expecting an error, got none")
@@ -112,9 +112,9 @@ func TestEventsKey(t *testing.T) {
 }
 
 func TestAddCheckEvent(t *testing.T) {
-	run := getRunByMeta("arun", "anamespace")
-	runb := getRunByMeta("arun", "bnamespace")
-	baseEvent := getEventToTest("some.event.type", run)
+	customRun1 := getCustomRunByMeta("arun", "anamespace")
+	customRun2 := getCustomRunByMeta("arun", "bnamespace")
+	baseEvent := getEventToTest("some.event.type", customRun1)
 
 	testcases := []struct {
 		name        string
@@ -129,25 +129,25 @@ func TestAddCheckEvent(t *testing.T) {
 	}, {
 		name:        "new timestamp event",
 		firstEvent:  baseEvent,
-		secondEvent: getEventToTest("some.event.type", run),
+		secondEvent: getEventToTest("some.event.type", customRun1),
 		wantFound:   true,
 	}, {
 		name:        "different namespace",
 		firstEvent:  baseEvent,
-		secondEvent: getEventToTest("some.event.type", runb),
+		secondEvent: getEventToTest("some.event.type", customRun2),
 		wantFound:   false,
 	}, {
 		name:        "different event type",
 		firstEvent:  baseEvent,
-		secondEvent: getEventToTest("some.other.event.type", run),
+		secondEvent: getEventToTest("some.other.event.type", customRun1),
 		wantFound:   false,
 	}}
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			testCache, _ := lru.New(10)
-			AddEventSentToCache(testCache, tc.firstEvent)
-			found, _ := IsCloudEventSent(testCache, tc.secondEvent)
+			_, _ = cache.ContainsOrAddCloudEvent(testCache, tc.firstEvent)
+			found, _ := cache.ContainsOrAddCloudEvent(testCache, tc.secondEvent)
 			if d := cmp.Diff(tc.wantFound, found); d != "" {
 				t.Errorf("Cache check failure %s", diff.PrintWantGot(d))
 			}

@@ -19,7 +19,7 @@ package subcommands
 import (
 	"encoding/base64"
 	"errors"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,8 +30,8 @@ func TestDecodeScript(t *testing.T) {
 	decoded := `#!/usr/bin/env sh
 echo "Hello World!"
 `
-	mode := os.FileMode(0600)
-	expectedPermissions := os.FileMode(0600)
+	mode := os.FileMode(0o600)
+	expectedPermissions := os.FileMode(0o600)
 
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "script.txt")
@@ -40,7 +40,7 @@ echo "Hello World!"
 			t.Errorf("temporary script file %q was not cleaned up: %v", src, err)
 		}
 	}()
-	if err := ioutil.WriteFile(src, []byte(encoded), mode); err != nil {
+	if err := os.WriteFile(src, []byte(encoded), mode); err != nil {
 		t.Fatalf("error writing encoded script: %v", err)
 	}
 
@@ -58,7 +58,7 @@ echo "Hello World!"
 		t.Fatalf("unexpected error statting decoded script: %v", err)
 	}
 	mod := info.Mode()
-	b, err := ioutil.ReadAll(file)
+	b, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatalf("unexpected error reading content of decoded script: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestDecodeScriptInvalidBase64(t *testing.T) {
 	invalidData := []byte("!")
 	expectedError := base64.CorruptInputError(0)
 
-	src, err := ioutil.TempFile("", "decode-script-test-*")
+	src, err := os.CreateTemp(t.TempDir(), "decode-script-test-*")
 	if err != nil {
 		t.Fatalf("error creating temp file: %v", err)
 	}

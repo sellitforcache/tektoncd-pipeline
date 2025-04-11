@@ -20,6 +20,12 @@ type (
 		Sha  string
 	}
 
+	// ReferenceInput provides a SHA for creating a reference.
+	ReferenceInput struct {
+		Name string
+		Sha  string
+	}
+
 	// CommitTree represents a commit tree
 	CommitTree struct {
 		Sha  string
@@ -43,6 +49,7 @@ type (
 		Sha  string
 		Page int
 		Size int
+		Path string
 	}
 
 	// Signature identifies a git commit creator.
@@ -62,6 +69,9 @@ type (
 		// FindBranch finds a git branch by name.
 		FindBranch(ctx context.Context, repo, name string) (*Reference, *Response, error)
 
+		// GetDefaultBranch finds default branch of the repo.
+		GetDefaultBranch(ctx context.Context, repo string) (*Reference, *Response, error)
+
 		// FindCommit finds a git commit by ref.
 		FindCommit(ctx context.Context, repo, ref string) (*Commit, *Response, error)
 
@@ -69,19 +79,19 @@ type (
 		FindTag(ctx context.Context, repo, name string) (*Reference, *Response, error)
 
 		// ListBranches returns a list of git branches.
-		ListBranches(ctx context.Context, repo string, opts ListOptions) ([]*Reference, *Response, error)
+		ListBranches(ctx context.Context, repo string, opts *ListOptions) ([]*Reference, *Response, error)
 
 		// ListCommits returns a list of git commits.
 		ListCommits(ctx context.Context, repo string, opts CommitListOptions) ([]*Commit, *Response, error)
 
 		// ListChanges returns the changeset between a commit and its parent.
-		ListChanges(ctx context.Context, repo, ref string, opts ListOptions) ([]*Change, *Response, error)
+		ListChanges(ctx context.Context, repo, ref string, opts *ListOptions) ([]*Change, *Response, error)
 
-		// ListChanges returns the changeset between two commits.
-		CompareCommits(ctx context.Context, repo, ref1, ref2 string, opts ListOptions) ([]*Change, *Response, error)
+		// CompareCommits returns the changeset between two commits.
+		CompareCommits(ctx context.Context, repo, ref1, ref2 string, opts *ListOptions) ([]*Change, *Response, error)
 
 		// ListTags returns a list of git tags.
-		ListTags(ctx context.Context, repo string, opts ListOptions) ([]*Reference, *Response, error)
+		ListTags(ctx context.Context, repo string, opts *ListOptions) ([]*Reference, *Response, error)
 
 		// FindRef returns the SHA of the given ref, such as "heads/master".
 		FindRef(ctx context.Context, repo, ref string) (string, *Response, error)

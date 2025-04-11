@@ -80,7 +80,7 @@ func (s *gitService) FindTag(ctx context.Context, repo, name string) (*scm.Refer
 	return nil, nil, scm.ErrNotSupported
 }
 
-func (s *gitService) ListBranches(ctx context.Context, repo string, opts scm.ListOptions) ([]*scm.Reference, *scm.Response, error) {
+func (s *gitService) ListBranches(ctx context.Context, repo string, opts *scm.ListOptions) ([]*scm.Reference, *scm.Response, error) {
 	path := fmt.Sprintf("repos/%s/branches?%s", repo, encodeListOptions(opts))
 	out := []*branch{}
 	res, err := s.client.do(ctx, "GET", path, nil, &out)
@@ -94,25 +94,33 @@ func (s *gitService) ListCommits(ctx context.Context, repo string, opts scm.Comm
 	return convertCommitList(out), res, err
 }
 
-func (s *gitService) ListTags(ctx context.Context, repo string, opts scm.ListOptions) ([]*scm.Reference, *scm.Response, error) {
+func (s *gitService) ListTags(ctx context.Context, repo string, opts *scm.ListOptions) ([]*scm.Reference, *scm.Response, error) {
 	path := fmt.Sprintf("repos/%s/tags?%s", repo, encodeListOptions(opts))
 	out := []*branch{}
 	res, err := s.client.do(ctx, "GET", path, nil, &out)
 	return convertTagList(out), res, err
 }
 
-func (s *gitService) ListChanges(ctx context.Context, repo, ref string, _ scm.ListOptions) ([]*scm.Change, *scm.Response, error) {
+func (s *gitService) ListChanges(ctx context.Context, repo, ref string, _ *scm.ListOptions) ([]*scm.Change, *scm.Response, error) {
 	path := fmt.Sprintf("repos/%s/commits/%s", repo, ref)
 	out := new(commit)
 	res, err := s.client.do(ctx, "GET", path, nil, &out)
 	return convertChangeList(out.Files), res, err
 }
 
-func (s *gitService) CompareCommits(ctx context.Context, repo, ref1, ref2 string, _ scm.ListOptions) ([]*scm.Change, *scm.Response, error) {
+func (s *gitService) CompareCommits(ctx context.Context, repo, ref1, ref2 string, _ *scm.ListOptions) ([]*scm.Change, *scm.Response, error) {
 	path := fmt.Sprintf("/repos/%s/compare/%s...%s", repo, ref1, ref2)
 	out := new(commit)
 	res, err := s.client.do(ctx, "GET", path, nil, &out)
 	return convertChangeList(out.Files), res, err
+}
+
+func (s *gitService) GetDefaultBranch(ctx context.Context, repo string) (*scm.Reference, *scm.Response, error) {
+	repository, res, err := s.client.Repositories.Find(ctx, repo)
+	if err != nil {
+		return nil, res, err
+	}
+	return s.FindBranch(ctx, repo, repository.Branch)
 }
 
 type branch struct {

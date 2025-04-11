@@ -54,7 +54,7 @@ Tekton Pipelines defines the following entities:
 
 ## Getting started
 
-To get started, complete the [Tekton Pipelines Tutorial](https://github.com/tektoncd/pipeline/blob/main/docs/tutorial.md) and go through our
+To get started, complete the [Tekton Pipelines Tutorial](https://tekton.dev/docs/getting-started) and go through our
 [examples](https://github.com/tektoncd/pipeline/tree/main/examples).
 
 ## Understanding Tekton Pipelines
@@ -66,13 +66,14 @@ See the following topics to learn how to use Tekton Pipelines in your project:
 - [Creating a Pipeline](pipelines.md)
 - [Running a Pipeline](pipelineruns.md)
 - [Defining Workspaces](workspaces.md)
-- [Creating PipelineResources](resources.md)
 - [Configuring authentication](auth.md)
 - [Using labels](labels.md)
 - [Viewing logs](logs.md)
 - [Pipelines metrics](metrics.md)
 - [Variable Substitutions](tasks.md#using-variable-substitution)
-- [Running a Custom Task (alpha)](runs.md)
+- [Running a Custom Task](customruns.md)
+- [Remote resolution of Pipelines and Tasks](resolution.md)
+- [Trusted Resources](trusted-resources.md)
 
 ## Contributing to Tekton Pipelines
 

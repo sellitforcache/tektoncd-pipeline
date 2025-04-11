@@ -26,10 +26,14 @@ import (
 type Interface interface {
 	// ClusterTasks returns a ClusterTaskInformer.
 	ClusterTasks() ClusterTaskInformer
+	// CustomRuns returns a CustomRunInformer.
+	CustomRuns() CustomRunInformer
 	// Pipelines returns a PipelineInformer.
 	Pipelines() PipelineInformer
 	// PipelineRuns returns a PipelineRunInformer.
 	PipelineRuns() PipelineRunInformer
+	// StepActions returns a StepActionInformer.
+	StepActions() StepActionInformer
 	// Tasks returns a TaskInformer.
 	Tasks() TaskInformer
 	// TaskRuns returns a TaskRunInformer.
@@ -52,6 +56,11 @@ func (v *version) ClusterTasks() ClusterTaskInformer {
 	return &clusterTaskInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
+// CustomRuns returns a CustomRunInformer.
+func (v *version) CustomRuns() CustomRunInformer {
+	return &customRunInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
 // Pipelines returns a PipelineInformer.
 func (v *version) Pipelines() PipelineInformer {
 	return &pipelineInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
@@ -60,6 +69,11 @@ func (v *version) Pipelines() PipelineInformer {
 // PipelineRuns returns a PipelineRunInformer.
 func (v *version) PipelineRuns() PipelineRunInformer {
 	return &pipelineRunInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// StepActions returns a StepActionInformer.
+func (v *version) StepActions() StepActionInformer {
+	return &stepActionInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // Tasks returns a TaskInformer.

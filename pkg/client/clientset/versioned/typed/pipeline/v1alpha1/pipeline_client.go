@@ -28,13 +28,9 @@ import (
 
 type TektonV1alpha1Interface interface {
 	RESTClient() rest.Interface
-	ClusterTasksGetter
-	ConditionsGetter
-	PipelinesGetter
-	PipelineRunsGetter
 	RunsGetter
-	TasksGetter
-	TaskRunsGetter
+	StepActionsGetter
+	VerificationPoliciesGetter
 }
 
 // TektonV1alpha1Client is used to interact with features provided by the tekton.dev group.
@@ -42,32 +38,16 @@ type TektonV1alpha1Client struct {
 	restClient rest.Interface
 }
 
-func (c *TektonV1alpha1Client) ClusterTasks() ClusterTaskInterface {
-	return newClusterTasks(c)
-}
-
-func (c *TektonV1alpha1Client) Conditions(namespace string) ConditionInterface {
-	return newConditions(c, namespace)
-}
-
-func (c *TektonV1alpha1Client) Pipelines(namespace string) PipelineInterface {
-	return newPipelines(c, namespace)
-}
-
-func (c *TektonV1alpha1Client) PipelineRuns(namespace string) PipelineRunInterface {
-	return newPipelineRuns(c, namespace)
-}
-
 func (c *TektonV1alpha1Client) Runs(namespace string) RunInterface {
 	return newRuns(c, namespace)
 }
 
-func (c *TektonV1alpha1Client) Tasks(namespace string) TaskInterface {
-	return newTasks(c, namespace)
+func (c *TektonV1alpha1Client) StepActions(namespace string) StepActionInterface {
+	return newStepActions(c, namespace)
 }
 
-func (c *TektonV1alpha1Client) TaskRuns(namespace string) TaskRunInterface {
-	return newTaskRuns(c, namespace)
+func (c *TektonV1alpha1Client) VerificationPolicies(namespace string) VerificationPolicyInterface {
+	return newVerificationPolicies(c, namespace)
 }
 
 // NewForConfig creates a new TektonV1alpha1Client for the given config.

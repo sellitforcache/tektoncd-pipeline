@@ -1,9 +1,10 @@
 <!--
 ---
 linkTitle: "Authentication"
-weight: 1000
+weight: 301
 ---
 -->
+
 # Authentication at Run Time
 
 This document describes how Tekton handles authentication when executing
@@ -75,6 +76,8 @@ any `Steps` in the `Run`. During credential initialization, Tekton accesses each
 aggregates them into a `/tekton/creds` directory. Tekton then copies or symlinks files from this directory into the user's
 `$HOME` directory.
 
+TODO(#5357): Update docs to explain recommended methods of passing secrets in via workspaces
+
 ## Understanding credential selection
 
 A `Run` might require multiple types of authentication. For example, a `Run` might require access to
@@ -134,7 +137,7 @@ The following are considerations for executing `Runs` as a non-root user:
   the non-root user's valid home directory to use SSH authentication for either Git or Docker.
 
 For an example of configuring SSH authentication in a non-root `securityContext`,
-see [`authenticating-git-commands`](../examples/v1beta1/taskruns/authenticating-git-commands.yaml).
+see [`authenticating-git-commands`](../examples/v1/taskruns/authenticating-git-commands.yaml).
 
 ## Limiting `Secret` access to specific `Steps`
 
@@ -159,13 +162,7 @@ This section describes how to configure the following authentication schemes for
 
 This section describes how to configure a `basic-auth` type `Secret` for use with Git. In the example below,
 before executing any `Steps` in the `Run`, Tekton creates a `~/.gitconfig` file containing the credentials
-specified in the `Secret`. When the `Steps` execute, Tekton uses those credentials to retrieve
-`PipelineResources` specified in the `Run`.
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+specified in the `Secret`. 
 
 Note: Github deprecated basic authentication with username and password. You can still use basic authentication, but you wil need to use a personal access token instead of the cleartext password in the following example. You can find out how to create such a token on the [Github documentation site](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token).
 
@@ -237,13 +234,7 @@ Note: Github deprecated basic authentication with username and password. You can
 
 This section describes how to configure an `ssh-auth` type `Secret` for use with Git. In the example below,
 before executing any `Steps` in the `Run`, Tekton creates a `~/.ssh/config` file containing the SSH key
-specified in the `Secret`. When the `Steps` execute, Tekton uses this key to retrieve `PipelineResources`
-specified in the `Run`.
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+specified in the `Secret`.
 
 1. In `secret.yaml`, define a `Secret` that specifies your SSH private key:
 
@@ -320,14 +311,7 @@ specified in the `Run`.
 
 ### Using a custom port for SSH authentication
 
-You can specify a custom SSH port in your `Secret`. In the example below,
-any `PipelineResource` referencing a repository at `example.com` will connect
-to it on port 2222.
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+You can specify a custom SSH port in your `Secret`. 
 
 ```
 apiVersion: v1
@@ -349,10 +333,10 @@ directly in the `Steps` of a `Task`. Since `ssh` ignores the `$HOME` variable an
 user's home directory specified in `/etc/passwd`, each `Step` must symlink `/tekton/home/.ssh`
 to the home directory of its associated user.
 
-**Note:** This explicit symlinking is not necessary when using a `git` type `PipelineResource` or the
+**Note:** This explicit symlinking is not necessary when using the
 [`git-clone` `Task`](https://github.com/tektoncd/catalog/tree/v1beta1/git) from Tekton Catalog.
 
-For example usage, see [`authenticating-git-commands`](../examples/v1beta1/taskruns/authenticating-git-commands.yaml).
+For example usage, see [`authenticating-git-commands`](../examples/v1/taskruns/authenticating-git-commands.yaml).
 
 ## Configuring authentication for Docker
 
@@ -366,13 +350,7 @@ This section describes how to configure the following authentication schemes for
 This section describes how to configure the `basic-auth` (username/password pair) type `Secret` for use with Docker.
 
 In the example below, before executing any `Steps` in the `Run`, Tekton creates a `~/.docker/config.json` file containing
-the credentials specified in the `Secret`. When the `Steps` execute, Tekton uses those credentials when retrieving
-`PipelineResources` specified in the `Run`.
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+the credentials specified in the `Secret`.
 
 1. In `secret.yaml`, define a `Secret` that specifies the username and password that you want Tekton
    to use to access the target Docker registry:
@@ -655,7 +633,7 @@ with the same UID.
 
 If you see this warning reported specifically by an `image-digest-exporter` Step
 you can safely ignore this message. The reason it appears is that this Step is
-injected by Tekton for Image PipelineResources and it runs with a non-root UID
+injected by Tekton and it runs with a non-root UID
 that can differ from those of the Steps in the Task. The Step does not use
 these credentials.
 
@@ -682,7 +660,6 @@ with differing UIDs cannot share access to the same credential files.
 1. Credentials must now be passed explicitly to Tasks either with [Workspaces](./workspaces.md#using-workspaces-in-tasks),
 environment variables (using [`envFrom`](https://kubernetes.io/docs/concepts/configuration/secret/#use-case-as-container-environment-variables) in your Steps and a Task param to
 specify a Secret), or a custom volume and volumeMount definition.
-2. Git PipelineResources may not work or may only work with public repositories.
 
 ### How to disable the built-in auth
 

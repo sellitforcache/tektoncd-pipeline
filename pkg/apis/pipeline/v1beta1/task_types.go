@@ -18,34 +18,25 @@ package v1beta1
 
 import (
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline/internal/checksum"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"knative.dev/pkg/kmeta"
 )
 
-const (
-	// TaskRunResultType default task run result value
-	TaskRunResultType ResultType = 1
-	// PipelineResourceResultType default pipeline result value
-	PipelineResourceResultType = 2
-	// InternalTektonResultType default internal tekton result value
-	InternalTektonResultType = 3
-	// UnknownResultType default unknown result type value
-	UnknownResultType = 10
-)
-
 // +genclient
 // +genclient:noStatus
 // +genreconciler:krshapedlogic=false
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +k8s:openapi-gen=true
 
 // Task represents a collection of sequential steps that are run as part of a
 // Pipeline using a set of inputs and producing a set of outputs. Tasks execute
 // when TaskRuns are created that provide the input parameters and resources and
 // output resources the Task requires.
 //
-// +k8s:openapi-gen=true
+// Deprecated: Please use v1.Task instead.
 type Task struct {
 	metav1.TypeMeta `json:",inline"`
 	// +optional
@@ -78,11 +69,34 @@ func (*Task) GetGroupVersionKind() schema.GroupVersionKind {
 	return SchemeGroupVersion.WithKind(pipeline.TaskControllerName)
 }
 
+// Checksum computes the sha256 checksum of the task object.
+// Prior to computing the checksum, it performs some preprocessing on the
+// metadata of the object where it removes system provided annotations.
+// Only the name, namespace, generateName, user-provided labels and annotations
+// and the taskSpec are included for the checksum computation.
+func (t *Task) Checksum() ([]byte, error) {
+	objectMeta := checksum.PrepareObjectMeta(t)
+	preprocessedTask := Task{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "tekton.dev/v1beta1",
+			Kind:       "Task"},
+		ObjectMeta: objectMeta,
+		Spec:       t.Spec,
+	}
+	sha256Checksum, err := checksum.ComputeSha256Checksum(preprocessedTask)
+	if err != nil {
+		return nil, err
+	}
+	return sha256Checksum, nil
+}
+
 // TaskSpec defines the desired state of Task.
 type TaskSpec struct {
 	// Resources is a list input and output resource to run the task
 	// Resources are represented in TaskRuns as bindings to instances of
 	// PipelineResources.
+	//
+	// Deprecated: Unused, preserved only for backwards compatibility
 	// +optional
 	Resources *TaskResources `json:"resources,omitempty"`
 
@@ -91,7 +105,12 @@ type TaskSpec struct {
 	// value.
 	// +optional
 	// +listType=atomic
-	Params []ParamSpec `json:"params,omitempty"`
+	Params ParamSpecs `json:"params,omitempty"`
+
+	// DisplayName is a user-facing name of the task that may be
+	// used to populate a UI.
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
 
 	// Description is a user-facing description of the task that may be
 	// used to populate a UI.
@@ -105,7 +124,10 @@ type TaskSpec struct {
 
 	// Volumes is a collection of volumes that are available to mount into the
 	// steps of the build.
+	// See Pod.spec.volumes (API version: v1)
 	// +listType=atomic
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
 	Volumes []corev1.Volume `json:"volumes,omitempty"`
 
 	// StepTemplate can be used as the basis for all step containers within the
@@ -135,35 +157,40 @@ type TaskList struct {
 	Items           []Task `json:"items"`
 }
 
-// TaskRef can be used to refer to a specific instance of a task.
-// Copied from CrossVersionObjectReference: https://github.com/kubernetes/kubernetes/blob/169df7434155cbbc22f1532cba8e0a9588e29ad8/pkg/apis/autoscaling/types.go#L64
-type TaskRef struct {
-	// Name of the referent; More info: http://kubernetes.io/docs/user-guide/identifiers#names
-	Name string `json:"name,omitempty"`
-	// TaskKind indicates the kind of the task, namespaced or cluster scoped.
-	Kind TaskKind `json:"kind,omitempty"`
-	// API version of the referent
-	// +optional
-	APIVersion string `json:"apiVersion,omitempty"`
-	// Bundle url reference to a Tekton Bundle.
-	// +optional
-	Bundle string `json:"bundle,omitempty"`
-
-	// ResolverRef allows referencing a Task in a remote location
-	// like a git repo. This field is only supported when the alpha
-	// feature gate is enabled.
-	// +optional
-	ResolverRef `json:",omitempty"`
+// HasDeprecatedFields returns true if the TaskSpec has deprecated field specified.
+func (ts *TaskSpec) HasDeprecatedFields() bool {
+	if ts == nil {
+		return false
+	}
+	if len(ts.Steps) > 0 {
+		for _, s := range ts.Steps {
+			if len(s.DeprecatedPorts) > 0 ||
+				s.DeprecatedLivenessProbe != nil ||
+				s.DeprecatedReadinessProbe != nil ||
+				s.DeprecatedStartupProbe != nil ||
+				s.DeprecatedLifecycle != nil ||
+				s.DeprecatedTerminationMessagePath != "" ||
+				s.DeprecatedTerminationMessagePolicy != "" ||
+				s.DeprecatedStdin ||
+				s.DeprecatedStdinOnce ||
+				s.DeprecatedTTY {
+				return true
+			}
+		}
+	}
+	if ts.StepTemplate != nil {
+		if len(ts.StepTemplate.DeprecatedPorts) > 0 ||
+			ts.StepTemplate.DeprecatedName != "" ||
+			ts.StepTemplate.DeprecatedReadinessProbe != nil ||
+			ts.StepTemplate.DeprecatedStartupProbe != nil ||
+			ts.StepTemplate.DeprecatedLifecycle != nil ||
+			ts.StepTemplate.DeprecatedTerminationMessagePath != "" ||
+			ts.StepTemplate.DeprecatedTerminationMessagePolicy != "" ||
+			ts.StepTemplate.DeprecatedStdin ||
+			ts.StepTemplate.DeprecatedStdinOnce ||
+			ts.StepTemplate.DeprecatedTTY {
+			return true
+		}
+	}
+	return false
 }
-
-// Check that Pipeline may be validated and defaulted.
-
-// TaskKind defines the type of Task used by the pipeline.
-type TaskKind string
-
-const (
-	// NamespacedTaskKind indicates that the task type has a namespaced scope.
-	NamespacedTaskKind TaskKind = "Task"
-	// ClusterTaskKind indicates that task type has a cluster scope.
-	ClusterTaskKind TaskKind = "ClusterTask"
-)

@@ -25,7 +25,6 @@ import (
 	"testing"
 
 	"github.com/tektoncd/pipeline/test/parse"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
 	"knative.dev/pkg/test/helpers"
@@ -48,17 +47,17 @@ func TestEntrypointRunningStepsInOrder(t *testing.T) {
 	epTaskRunName := helpers.ObjectNameForTest(t)
 
 	t.Logf("Creating TaskRun in namespace %s", namespace)
-	if _, err := c.TaskRunClient.Create(ctx, parse.MustParseTaskRun(t, fmt.Sprintf(`
+	if _, err := c.V1TaskRunClient.Create(ctx, parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   taskSpec:
     steps:
-    - image: busybox
+    - image: mirror.gcr.io/busybox
       workingDir: /workspace
       script: 'sleep 3 && touch foo'
-    - image: ubuntu
+    - image: mirror.gcr.io/ubuntu
       workingDir: /workspace
       script: 'ls foo'
 `, epTaskRunName, namespace)), metav1.CreateOptions{}); err != nil {
@@ -66,8 +65,7 @@ spec:
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to finish successfully", namespace)
-	if err := WaitForTaskRunState(ctx, c, epTaskRunName, TaskRunSucceed(epTaskRunName), "TaskRunSuccess"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, epTaskRunName, TaskRunSucceed(epTaskRunName), "TaskRunSuccess", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish successfully: %s", err)
 	}
-
 }

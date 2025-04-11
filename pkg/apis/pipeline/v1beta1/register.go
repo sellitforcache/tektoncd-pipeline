@@ -56,6 +56,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&TaskRunList{},
 		&PipelineRun{},
 		&PipelineRunList{},
+		&CustomRun{},
+		&CustomRunList{},
+		&StepAction{},
+		&StepActionList{},
 	)
 	// &Condition{},
 	// &ConditionList{},

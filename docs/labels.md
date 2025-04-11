@@ -1,9 +1,10 @@
 <!--
 ---
 linkTitle: "Labels and Annotations"
-weight: 1300
+weight: 305
 ---
 -->
+
 # Labels and Annotations
 
 Tekton allows you to use custom [Kubernetes Labels](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/)
@@ -35,8 +36,6 @@ and then to the associated `Pods`. As for `Pipeline` and `PipelineRun`, if a lab
 - For standalone `TaskRuns` (that is, ones not executing as part of a `Pipeline`), labels
 propagate from the [referenced `Task`](taskruns.md#specifying-the-target-task), if one exists, to
 the corresponding `TaskRun`, and then to the associated `Pod`. The same as above applies.
-
-- For `Conditions`, labels propagate to the corresponding `TaskRuns`, and then to the associated `Pods`.
 
 ## Automatic labeling
 
@@ -135,5 +134,3 @@ and then to the associated `Pods`. As for `Pipeline` and `PipelineRun`, if a ann
 - For standalone `TaskRuns` (that is, ones not executing as part of a `Pipeline`), annotations
 propagate from the [referenced `Task`](taskruns.md#specifying-the-target-task), if one exists, to
 the corresponding `TaskRun`, and then to the associated `Pod`. The same as above applies.
-
-- For `Conditions`, annotations propagate to the corresponding `TaskRuns`, and then to the associated `Pods`.

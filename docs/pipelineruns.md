@@ -1,9 +1,10 @@
 <!--
 ---
 linkTitle: "PipelineRuns"
-weight: 500
+weight: 204
 ---
 -->
+
 # PipelineRuns
 
 <!-- toc -->
@@ -13,20 +14,25 @@ weight: 500
     - [Specifying the target <code>Pipeline</code>](#specifying-the-target-pipeline)
       - [Tekton Bundles](#tekton-bundles)
       - [Remote Pipelines](#remote-pipelines)
-    - [Specifying <code>Resources</code>](#specifying-resources)
+    - [Specifying Task-level `ComputeResources`](#specifying-task-level-computeresources)
     - [Specifying <code>Parameters</code>](#specifying-parameters)
-      - [Implicit Parameters](#implicit-parameters)
+      - [Propagated Parameters](#propagated-parameters)
+        - [Scope and Precedence](#scope-and-precedence)
+        - [Default Values](#default-values)
+        - [Object Parameters](#object-parameters)
     - [Specifying custom <code>ServiceAccount</code> credentials](#specifying-custom-serviceaccount-credentials)
     - [Mapping <code>ServiceAccount</code> credentials to <code>Tasks</code>](#mapping-serviceaccount-credentials-to-tasks)
     - [Specifying a <code>Pod</code> template](#specifying-a-pod-template)
     - [Specifying taskRunSpecs](#specifying-taskrunspecs)
     - [Specifying <code>Workspaces</code>](#specifying-workspaces)
+      - [Propagated Workspaces](#propagated-workspaces)
+        - [Referenced TaskRuns within Embedded PipelineRuns](#referenced-taskruns-within-embedded-pipelineruns)
     - [Specifying <code>LimitRange</code> values](#specifying-limitrange-values)
     - [Configuring a failure timeout](#configuring-a-failure-timeout)
   - [<code>PipelineRun</code> status](#pipelinerun-status)
-    - [The <code>status</code> field](#the-status-field) 
-    - [Configuring usage of <code>TaskRun</code> and <code>Run</code> embedded statuses](#configuring-usage-of-taskrun-and-run-embedded-statuses)
+    - [The <code>status</code> field](#the-status-field)
     - [Monitoring execution status](#monitoring-execution-status)
+    - [Marking off user errors](#marking-off-user-errors)
   - [Cancelling a <code>PipelineRun</code>](#cancelling-a-pipelinerun)
   - [Gracefully cancelling a <code>PipelineRun</code>](#gracefully-cancelling-a-pipelinerun)
   - [Gracefully stopping a <code>PipelineRun</code>](#gracefully-stopping-a-pipelinerun)
@@ -63,19 +69,15 @@ A `PipelineRun` definition supports the following fields:
     this `PipelineRun` object.
     - [`pipelineRef` or `pipelineSpec`](#specifying-the-target-pipeline) - Specifies the target [`Pipeline`](pipelines.md).
 - Optional:
-  - [`resources`](#specifying-resources) - Specifies the [`PipelineResources`](resources.md) to provision
-    for executing the target `Pipeline`.
   - [`params`](#specifying-parameters) - Specifies the desired execution parameters for the `Pipeline`.
   - [`serviceAccountName`](#specifying-custom-serviceaccount-credentials) - Specifies a `ServiceAccount`
     object that supplies specific execution credentials for the `Pipeline`.
-  - [`serviceAccountNames`](#mapping-serviceaccount-credentials-to-tasks) - Maps specific `serviceAccountName` values
-    to `Tasks` in the `Pipeline`. This overrides the credentials set for the entire `Pipeline`.
-  - [`status`](#cancelling-a-pipelinerun) - Specifies options for cancelling a `PipelineRun`. 
-  - [`taskRunSpecs`](#specifying-taskrunspecs) - Specifies a list of `PipelineRunTaskSpec` which allows for setting `ServiceAccountName` and [`Pod` template](./podtemplates.md) for each task. This overrides the `Pod` template set for the entire `Pipeline`.
+  - [`status`](#cancelling-a-pipelinerun) - Specifies options for cancelling a `PipelineRun`.
+  - [`taskRunSpecs`](#specifying-taskrunspecs) - Specifies a list of `PipelineRunTaskSpec` which allows for setting `ServiceAccountName`, [`Pod` template](./podtemplates.md), and `Metadata` for each task. This overrides the `Pod` template set for the entire `Pipeline`.
   - [`timeout`](#configuring-a-failure-timeout) - Specifies the timeout before the `PipelineRun` fails. `timeout` is deprecated and will eventually be removed, so consider using `timeouts` instead.
   - [`timeouts`](#configuring-a-failure-timeout) - Specifies the timeout before the `PipelineRun` fails. `timeouts` allows more granular timeout configuration, at the pipeline, tasks, and finally levels
   - [`podTemplate`](#specifying-a-pod-template) - Specifies a [`Pod` template](./podtemplates.md) to use as the basis for the configuration of the `Pod` that executes each `Task`.
-  - [`workspaces`](#specifying-workspaces) - Specifies a set of workspace bindings which must match the names of workspaces declared in the pipeline being used. 
+  - [`workspaces`](#specifying-workspaces) - Specifies a set of workspace bindings which must match the names of workspaces declared in the pipeline being used.
 
 [kubernetes-overview]:
   https://kubernetes.io/docs/concepts/overview/working-with-objects/kubernetes-objects/#required-fields
@@ -103,7 +105,7 @@ spec:
           name: mytask
 ```
 
-The `Pipeline` in the [`pipelineSpec` example](../examples/v1beta1/pipelineruns/pipelinerun-with-pipelinespec.yaml)
+The `Pipeline` in the [`pipelineSpec` example](../examples/v1/pipelineruns/pipelinerun-with-pipelinespec.yaml)
 example displays morning and evening greetings. Once you create and execute it, you can check the logs for its `Pods`:
 
 ```bash
@@ -125,7 +127,7 @@ spec:
           steps: ...
 ```
 
-In the [`taskSpec` in `pipelineSpec` example](../examples/v1beta1/pipelineruns/pipelinerun-with-pipelinespec-and-taskspec.yaml)
+In the [`taskSpec` in `pipelineSpec` example](../examples/v1/pipelineruns/pipelinerun-with-pipelinespec-and-taskspec.yaml)
 it's `Tasks` all the way down!
 
 You can also specify labels and annotations with `taskSpec` which are propagated to each `taskRun` and then to the
@@ -152,17 +154,22 @@ spec:
 
 #### Tekton Bundles
 
-**Note: This is only allowed if `enable-tekton-oci-bundles` is set to
-`"true"` in the `feature-flags` configmap, see [`install.md`](./install.md#customizing-the-pipelines-controller-behavior)**
+A `Tekton Bundle` is an OCI artifact that contains Tekton resources like `Tasks` which can be referenced within a `taskRef`.
 
-You may also use a `Tekton Bundle` to reference a pipeline defined remotely.
+You can reference a `Tekton bundle` in a `TaskRef` in both `v1` and `v1beta1` using [remote resolution](./bundle-resolver.md#pipeline-resolution). The example syntax shown below for `v1` uses remote resolution and requires enabling [beta features](./additional-configs.md#beta-features).
 
- ```yaml
- spec:
-   pipelineRef:
-     name: mypipeline
-     bundle: docker.io/myrepo/mycatalog:v1.0
- ```
+```yaml
+spec:
+  pipelineRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: docker.io/myrepo/mycatalog:v1.0
+    - name: name
+      value: mypipeline
+    - name: kind
+      value: Pipeline
+```
 
 The syntax and caveats are similar to using `Tekton Bundles` for  `Task` references
 in [Pipelines](pipelines.md#tekton-bundles) or [TaskRuns](taskruns.md#tekton-bundles).
@@ -172,92 +179,58 @@ so long as the artifact adheres to the [contract](tekton-bundle-contracts.md).
 
 #### Remote Pipelines
 
-**([alpha only](https://github.com/tektoncd/pipeline/blob/main/docs/install.md#alpha-features))**
+**([beta feature](https://github.com/tektoncd/pipeline/blob/main/docs/install.md#beta-features))**
 
 A `pipelineRef` field may specify a Pipeline in a remote location such as git.
 Support for specific types of remote will depend on the Resolvers your
-cluster's operator has installed. The below example demonstrates
+cluster's operator has installed. For more information including a tutorial, please check [resolution docs](resolution.md). The below example demonstrates
 referencing a Pipeline in git:
 
 ```yaml
 spec:
   pipelineRef:
     resolver: git
-    resource:
+    params:
     - name: url
       value: https://github.com/tektoncd/catalog.git
-    - name: commit
+    - name: revision
       value: abc123
-    - name: path
+    - name: pathInRepo
       value: /pipeline/buildpacks/0.1/buildpacks.yaml
 ```
 
-### Specifying `Resources`
+### Specifying Task-level `ComputeResources`
 
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+**([alpha only](https://github.com/tektoncd/pipeline/blob/main/docs/additional-configs.md#alpha-features))**
 
-A `Pipeline` requires [`PipelineResources`](resources.md) to provide inputs and store outputs
-for the `Tasks` that comprise it. You must provision those resources in the `resources` field
-in the `spec` section of the `PipelineRun` definition.
+Task-level compute resources can be configured in `PipelineRun.TaskRunSpecs.ComputeResources` or `TaskRun.ComputeResources`.
 
-A `Pipeline` may require you to provision a number of different resources. For example:
-
-- When executing a `Pipeline` against a pull request, the triggering
-  system must specify the commit-ish of a `git` resource.
-- When executing a `Pipeline` manually against your own environment, you
-  must provision your GitHub fork using the `git` resource; your image
-  registry using the `image` resource; and your Kubernetes cluster using the
-  `cluster` resource.
-
-You can reference a `PipelineResources` using the `resourceRef` field:
+e.g.
 
 ```yaml
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline
 spec:
-  resources:
-    - name: source-repo
-      resourceRef:
-        name: skaffold-git
-    - name: web-image
-      resourceRef:
-        name: skaffold-image-leeroy-web
-    - name: app-image
-      resourceRef:
-        name: skaffold-image-leeroy-app
+  tasks:
+    - name: task
+---
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pipelinerun
+spec:
+  pipelineRef:
+    name: pipeline
+  taskRunSpecs:
+    - pipelineTaskName: task
+      computeResources:
+        requests:
+          cpu: 2
 ```
 
-You can also embed a `PipelineResource` definition in the `PipelineRun` using the `resourceSpec` field:
-
-```yaml
-spec:
-  resources:
-    - name: source-repo
-      resourceSpec:
-        type: git
-        params:
-          - name: revision
-            value: v0.32.0
-          - name: url
-            value: https://github.com/GoogleContainerTools/skaffold
-    - name: web-image
-      resourceSpec:
-        type: image
-        params:
-          - name: url
-            value: gcr.io/christiewilson-catfactory/leeroy-web
-    - name: app-image
-      resourceSpec:
-        type: image
-        params:
-          - name: url
-            value: gcr.io/christiewilson-catfactory/leeroy-app
-```
-
-**Note:** All `persistentVolumeClaims` specified within a `PipelineRun` are bound
-until their respective `Pods` or the entire `PipelineRun` are deleted. This also applies
-to all `persistentVolumeClaims` generated internally.
+Further details and examples could be found in [Compute Resources in Tekton](https://github.com/tektoncd/pipeline/blob/main/docs/compute-resources.md).
 
 ### Specifying `Parameters`
 
@@ -284,74 +257,427 @@ case is when your CI system autogenerates `PipelineRuns` and it has `Parameters`
 provide to all `PipelineRuns`. Because you can pass in extra `Parameters`, you don't have to
 go through the complexity of checking each `Pipeline` and providing only the required params.
 
-#### Implicit Parameters
+#### Parameter Enums
 
-**([alpha only](https://github.com/tektoncd/pipeline/blob/main/docs/install.md#alpha-features))**
+> :seedling: **`enum` is an [alpha](additional-configs.md#alpha-features) feature.** The `enable-param-enum` feature flag must be set to `"true"` to enable this feature.
+
+If a `Parameter` is guarded by `Enum` in the `Pipeline`, you can only provide `Parameter` values in the `PipelineRun` that are predefined in the `Param.Enum` in the `Pipeline`. The `PipelineRun` will fail with reason `InvalidParamValue` otherwise.
+
+Tekton will also the validate the `param` values passed to any referenced `Tasks` (via `taskRef`) if `Enum` is specified for the `Task`. The `PipelineRun` will fail with reason `InvalidParamValue` if `Enum` validation is failed for any of the `PipelineTask`.
+
+You can also specify `Enum` in an embedded `Pipeline` in a `PipelineRun`. The same `Param` validation will be executed in this scenario.
+
+See more details in [Param.Enum](./pipelines.md#param-enum).
+
+#### Propagated Parameters
 
 When using an inlined spec, parameters from the parent `PipelineRun` will be
-available to any inlined specs without needing to be explicitly defined. This
+propagated to any inlined specs without needing to be explicitly defined. This
 allows authors to simplify specs by automatically propagating top-level
 parameters down to other inlined resources.
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
-  generateName: echo-
+  generateName: pr-echo-
 spec:
   params:
-    - name: MESSAGE
-      value: "Good Morning!"
+    - name: HELLO
+      value: "Hello World!"
+    - name: BYE
+      value: "Bye World!"
   pipelineSpec:
     tasks:
-      - name: echo-message
+      - name: echo-hello
         taskSpec:
           steps:
             - name: echo
               image: ubuntu
               script: |
                 #!/usr/bin/env bash
-                echo "$(params.MESSAGE)"
+                echo "$(params.HELLO)"
+      - name: echo-bye
+        taskSpec:
+          steps:
+            - name: echo
+              image: ubuntu
+              script: |
+                #!/usr/bin/env bash
+                echo "$(params.BYE)"
 ```
 
-On creation, this will resolve to a fully-formed spec and will be returned back
-to clients to avoid ambiguity:
+On executing the pipeline run, the parameters will be interpolated during resolution.
+The specifications are not mutated before storage and so it remains the same.
+The status is updated.
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
-  generateName: echo-
+  name: pr-echo-szzs9
+  ...
 spec:
   params:
-  - name: MESSAGE
-    value: Good Morning!
+  - name: HELLO
+    value: Hello World!
+  - name: BYE
+    value: Bye World!
   pipelineSpec:
-    params:
-    - name: MESSAGE
-      type: string
     tasks:
-    - name: echo-message
-      params:
-      - name: MESSAGE
-        value: $(params.MESSAGE)
+    - name: echo-hello
       taskSpec:
-        params:
-        - name: MESSAGE
-          type: string
-        spec: null
         steps:
-        - name: echo
-          image: ubuntu
+        - image: ubuntu
+          name: echo
           script: |
             #!/usr/bin/env bash
-            echo "$(params.MESSAGE)"
+            echo "$(params.HELLO)"
+    - name: echo-bye
+      taskSpec:
+        steps:
+        - image: ubuntu
+          name: echo
+          script: |
+            #!/usr/bin/env bash
+            echo "$(params.BYE)"
+status:
+  conditions:
+  - lastTransitionTime: "2022-04-07T12:34:58Z"
+    message: 'Tasks Completed: 2 (Failed: 0, Canceled 0), Skipped: 0'
+    reason: Succeeded
+    status: "True"
+    type: Succeeded
+  pipelineSpec:
+    ...
+  childReferences:
+  - name: pr-echo-szzs9-echo-hello
+    pipelineTaskName: echo-hello
+    kind: TaskRun
+  - name: pr-echo-szzs9-echo-bye
+    pipelineTaskName: echo-bye
+    kind: TaskRun
 ```
 
-Note that all implicit Parameters will be passed through to inlined resources
-(i.e. PipelineRun -> Pipeline -> Tasks) even if they are not used.
-Extra parameters passed this way should generally be safe (since they aren't
-actually used), but may result in more verbose specs being returned by the API.
+##### Scope and Precedence
+
+When Parameters names conflict, the inner scope would take precedence as shown in this example:
+
+```yaml
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: pr-echo-
+spec:
+  params:
+  - name: HELLO
+    value: "Hello World!"
+  - name: BYE
+    value: "Bye World!"
+  pipelineSpec:
+    tasks:
+      - name: echo-hello
+        params:
+        - name: HELLO
+          value: "Sasa World!"
+        taskSpec:
+          params:
+            - name: HELLO
+              type: string
+          steps:
+            - name: echo
+              image: ubuntu
+              script: |
+                #!/usr/bin/env bash
+                echo "$(params.HELLO)"
+    ...
+```
+
+resolves to
+
+```yaml
+# Successful execution of the above PipelineRun
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pr-echo-szzs9
+  ...
+spec:
+  ...
+status:
+  conditions:
+    - lastTransitionTime: "2022-04-07T12:34:58Z"
+      message: 'Tasks Completed: 2 (Failed: 0, Canceled 0), Skipped: 0'
+      reason: Succeeded
+      status: "True"
+      type: Succeeded
+  ...
+  childReferences:
+  - name: pr-echo-szzs9-echo-hello
+    pipelineTaskName: echo-hello
+    kind: TaskRun
+  ...
+```
+
+##### Default Values
+
+When `Parameter` specifications have default values, the `Parameter` value provided at runtime would take precedence to give users control, as shown in this example:
+
+```yaml
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: pr-echo-
+spec:
+  params:
+  - name: HELLO
+    value: "Hello World!"
+  - name: BYE
+    value: "Bye World!"
+  pipelineSpec:
+    tasks:
+      - name: echo-hello
+        taskSpec:
+          params:
+          - name: HELLO
+            type: string
+            default: "Sasa World!"
+          steps:
+            - name: echo
+              image: ubuntu
+              script: |
+                #!/usr/bin/env bash
+                echo "$(params.HELLO)"
+    ...
+```
+
+resolves to
+
+```yaml
+# Successful execution of the above PipelineRun
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pr-echo-szzs9
+  ...
+spec:
+  ...
+status:
+  conditions:
+    - lastTransitionTime: "2022-04-07T12:34:58Z"
+      message: 'Tasks Completed: 2 (Failed: 0, Canceled 0), Skipped: 0'
+      reason: Succeeded
+      status: "True"
+      type: Succeeded
+  ...
+  childReferences:
+  - name: pr-echo-szzs9-echo-hello
+    pipelineTaskName: echo-hello
+    kind: TaskRun
+  ...
+```
+
+##### Referenced Resources
+
+When a PipelineRun definition has referenced specifications but does not explicitly pass Parameters, the PipelineRun will be created but the execution will fail because of missing Parameters.
+
+```yaml
+# Invalid PipelineRun attempting to propagate Parameters to referenced Tasks
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: pr-echo-
+spec:
+  params:
+  - name: HELLO
+    value: "Hello World!"
+  - name: BYE
+    value: "Bye World!"
+  pipelineSpec:
+    tasks:
+      - name: echo-hello
+        taskRef:
+          name: echo-hello
+      - name: echo-bye
+        taskRef:
+          name: echo-bye
+---
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: echo-hello
+spec:
+  steps:
+    - name: echo
+      image: ubuntu
+      script: |
+        #!/usr/bin/env bash
+        echo "$(params.HELLO)"
+---
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: echo-bye
+spec:
+  steps:
+    - name: echo
+      image: ubuntu
+      script: |
+        #!/usr/bin/env bash
+        echo "$(params.BYE)"
+```
+
+Fails as follows:
+
+```yaml
+# Failed execution of the above PipelineRun
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pr-echo-24lmf
+  ...
+spec:
+  params:
+  - name: HELLO
+    value: Hello World!
+  - name: BYE
+    value: Bye World!
+  pipelineSpec:
+    tasks:
+    - name: echo-hello
+      taskRef:
+        kind: Task
+        name: echo-hello
+    - name: echo-bye
+      taskRef:
+        kind: Task
+        name: echo-bye
+status:
+  conditions:
+  - lastTransitionTime: "2022-04-07T20:24:51Z"
+    message: 'invalid input params for task echo-hello: missing values for
+              these params which have no default values: [HELLO]'
+    reason: PipelineValidationFailed
+    status: "False"
+    type: Succeeded
+  ...
+```
+
+##### Object Parameters
+
+When using an inlined spec, object parameters from the parent `PipelineRun` will also be
+propagated to any inlined specs without needing to be explicitly defined. This
+allows authors to simplify specs by automatically propagating top-level
+parameters down to other inlined resources.
+When propagating object parameters, scope and precedence also holds as shown below.
+
+```yaml
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: pipelinerun-object-param-result
+spec:
+  params:
+    - name: gitrepo
+      value:
+        url: abc.com
+        commit: sha123
+  pipelineSpec:
+    tasks:
+      - name: task1
+        params:
+          - name: gitrepo
+            value:
+              branch: main
+              url: xyz.com
+        taskSpec:
+          steps:
+            - name: write-result
+              image: bash
+              args: [
+                "echo",
+                "--url=$(params.gitrepo.url)",
+                "--commit=$(params.gitrepo.commit)",
+                "--branch=$(params.gitrepo.branch)",
+              ]
+```
+
+resolves to
+
+```yaml
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pipelinerun-object-param-resultpxp59
+  ...
+spec:
+  params:
+  - name: gitrepo
+    value:
+      commit: sha123
+      url: abc.com
+  pipelineSpec:
+    tasks:
+    - name: task1
+      params:
+      - name: gitrepo
+        value:
+          branch: main
+          url: xyz.com
+      taskSpec:
+        metadata: {}
+        spec: null
+        steps:
+        - args:
+          - echo
+          - --url=$(params.gitrepo.url)
+          - --commit=$(params.gitrepo.commit)
+          - --branch=$(params.gitrepo.branch)
+          image: bash
+          name: write-result
+status:
+  completionTime: "2022-09-08T17:22:01Z"
+  conditions:
+  - lastTransitionTime: "2022-09-08T17:22:01Z"
+    message: 'Tasks Completed: 1 (Failed: 0, Cancelled 0), Skipped: 0'
+    reason: Succeeded
+    status: "True"
+    type: Succeeded
+  pipelineSpec:
+    tasks:
+    - name: task1
+      params:
+      - name: gitrepo
+        value:
+          branch: main
+          url: xyz.com
+      taskSpec:
+        metadata: {}
+        spec: null
+        steps:
+        - args:
+          - echo
+          - --url=xyz.com
+          - --commit=sha123
+          - --branch=main
+          image: bash
+          name: write-result
+  startTime: "2022-09-08T17:21:57Z"
+  childReferences:
+  - name: pipelinerun-object-param-resultpxp59-task1
+    pipelineTaskName: task1
+    kind: TaskRun
+          ...
+	taskSpec:
+          steps:
+          - args:
+            - echo
+            - --url=xyz.com
+            - --commit=sha123
+            - --branch=main
+            image: bash
+            name: write-result
+```
 
 ### Specifying custom `ServiceAccount` credentials
 
@@ -369,19 +695,34 @@ Consult the documentation of the custom task that you are using to determine whe
 
 ### Mapping `ServiceAccount` credentials to `Tasks`
 
-If you require more granularity in specifying execution credentials, use the `serviceAccountNames` field to
+If you require more granularity in specifying execution credentials, use the `taskRunSpecs[].taskServiceAccountName` field to
 map a specific `serviceAccountName` value to a specific `Task` in the `Pipeline`. This overrides the global
 `serviceAccountName` you may have set for the `Pipeline` as described in the previous section.
 
 For example, if you specify these mappings:
 
+{{< tabs >}}
+{{% tab "v1" %}}
+```yaml
+spec:
+  taskRunTemplate:
+    serviceAccountName: sa-1
+  taskRunSpecs:
+    - pipelineTaskName: build-task
+      serviceAccountName: sa-for-build
+```
+{{% /tab %}}
+
+{{% tab "v1beta1" %}}
 ```yaml
 spec:
   serviceAccountName: sa-1
-  serviceAccountNames:
-    - taskName: build-task
-      serviceAccountName: sa-for-build
+  taskRunSpecs:
+    - pipelineTaskName: build-task
+      taskServiceAccountName: sa-for-build
 ```
+{{% /tab %}}
+{{< /tabs >}}
 
 for this `Pipeline`:
 
@@ -399,6 +740,89 @@ spec:
 
 then `test-task` will execute using the `sa-1` account while `build-task` will execute with `sa-for-build`.
 
+#### Propagated Results
+
+When using an embedded spec, `Results` from the parent `PipelineRun` will be
+propagated to any inlined specs without needing to be explicitly defined. This
+allows authors to simplify specs by automatically propagating top-level
+results down to other inlined resources.
+**`Result` substitutions will only be made for `name`, `commands`, `args`, `env` and `script` fields of `steps`, `sidecars`.**
+
+```yaml
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: uid-pipeline-run
+spec:
+  pipelineSpec:
+    tasks:
+    - name: add-uid
+      taskSpec:
+        results:
+          - name: uid
+            type: string
+        steps:
+          - name: add-uid
+            image: busybox
+            command: ["/bin/sh", "-c"]
+            args:
+              - echo "1001" | tee $(results.uid.path)
+    - name: show-uid
+      # params:
+      #   - name: uid
+      #     value: $(tasks.add-uid.results.uid)
+      taskSpec:
+        steps:
+          - name: show-uid
+            image: busybox
+            command: ["/bin/sh", "-c"]
+            args:
+              - echo $(tasks.add-uid.results.uid)
+              # - echo $(params.uid)
+```
+
+On executing the `PipelineRun`, the `Results` will be interpolated during resolution.
+
+```yaml
+name:         uid-pipeline-run-show-uid
+apiVersion:  tekton.dev/v1
+kind:         TaskRun
+metadata:
+  ...
+spec:
+  taskSpec:
+    steps:
+      args:
+        echo 1001
+      command:
+        - /bin/sh
+        - -c
+      image:  busybox
+      name:   show-uid
+status:
+  completionTime:  2023-09-11T07:34:28Z
+  conditions:
+    lastTransitionTime:  2023-09-11T07:34:28Z
+    message:               All Steps have completed executing
+    reason:                Succeeded
+    status:                True
+    type:                  Succeeded
+  podName:                uid-pipeline-run-show-uid-pod
+  steps:
+    container:  step-show-uid
+    name:       show-uid
+  taskSpec:
+    steps:
+      args:
+        echo 1001
+      command:
+        /bin/sh
+        -c
+      computeResources:
+      image:  busybox
+      name:   show-uid
+```
+
 ### Specifying a `Pod` template
 
 You can specify a [`Pod` template](podtemplates.md) configuration that will serve as the configuration starting
@@ -408,6 +832,53 @@ customize the `Pod` configuration specifically for each `TaskRun`.
 In the following example, the `Task` defines a `volumeMount` object named `my-cache`. The `PipelineRun`
 provisions this object for the `Task` using a `persistentVolumeClaim` and executes it as user 1001.
 
+{{< tabs >}}
+{{% tab "v1" %}}
+```yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: mytask
+spec:
+  steps:
+    - name: writesomething
+      image: ubuntu
+      command: ["bash", "-c"]
+      args: ["echo 'foo' > /my-cache/bar"]
+      volumeMounts:
+        - name: my-cache
+          mountPath: /my-cache
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: mypipeline
+spec:
+  tasks:
+    - name: task1
+      taskRef:
+        name: mytask
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: mypipelinerun
+spec:
+  pipelineRef:
+    name: mypipeline
+  taskRunTemplate:
+    podTemplate:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      volumes:
+        - name: my-cache
+          persistentVolumeClaim:
+            claimName: my-volume-claim
+```
+{{% /tab %}}
+
+{{% tab "v1beta1" %}}
 ```yaml
 apiVersion: tekton.dev/v1beta1
 kind: Task
@@ -449,6 +920,8 @@ spec:
         persistentVolumeClaim:
           claimName: my-volume-claim
 ```
+{{% /tab %}}
+{{< /tabs >}}
 
 [`Custom tasks`](pipelines.md#using-custom-tasks) may or may not use a pod template.
 Consult the documentation of the custom task that you are using to determine whether it supports a pod template.
@@ -461,6 +934,25 @@ will run with the configured  `TaskServiceAccountName` and `TaskPodTemplate` ove
 wide `ServiceAccountName`  and [`podTemplate`](./podtemplates.md) configuration,
 for example:
 
+{{< tabs >}}
+{{% tab "v1" %}}
+```yaml
+spec:
+  podTemplate:
+    securityContext:
+      runAsUser: 1000
+      runAsGroup: 2000
+      fsGroup: 3000
+  taskRunSpecs:
+    - pipelineTaskName: build-task
+      serviceAccountName: sa-for-build
+      podTemplate:
+        nodeSelector:
+          disktype: ssd
+```
+{{% /tab %}}
+
+{{% tab "v1beta1" %}}
 ```yaml
 spec:
   podTemplate:
@@ -475,10 +967,46 @@ spec:
         nodeSelector:
           disktype: ssd
 ```
+{{% /tab %}}
+{{< /tabs >}}
 
-If used with this `Pipeline`,  `build-task` will use the task specific `PodTemplate` (where `nodeSelector` has `disktype` equal to `ssd`).
-`PipelineTaskRunSpec` may also contain `StepOverrides` and `SidecarOverrides`; see
+If used with this `Pipeline`,  `build-task` will use the task specific `PodTemplate` (where `nodeSelector` has `disktype` equal to `ssd`)
+along with `securityContext` from the `pipelineRun.spec.podTemplate`.
+`PipelineTaskRunSpec` may also contain `StepSpecs` and `SidecarSpecs`; see
 [Overriding `Task` `Steps` and `Sidecars`](./taskruns.md#overriding-task-steps-and-sidecars) for more information.
+
+The optional annotations and labels can be added under a `Metadata` field as for a specific running context.
+
+e.g.
+
+Rendering needed secrets with Vault:
+
+```yaml
+spec:
+  pipelineRef:
+    name: pipeline-name
+  taskRunSpecs:
+    - pipelineTaskName: task-name
+      metadata:
+        annotations:
+          vault.hashicorp.com/agent-inject-secret-foo: "/path/to/foo"
+          vault.hashicorp.com/role: role-name
+```
+
+Updating labels applied in a runtime context:
+
+```yaml
+spec:
+  pipelineRef:
+    name: pipeline-name
+  taskRunSpecs:
+    - pipelineTaskName: task-name
+      metadata:
+        labels:
+          app: cloudevent
+```
+
+If a metadata key is present in different levels, the value that will be used in the `PipelineRun` is determined using this precedence order: `PipelineRun.spec.taskRunSpec.metadata` > `PipelineRun.metadata` > `Pipeline.spec.tasks.taskSpec.metadata`.
 
 ### Specifying `Workspaces`
 
@@ -494,13 +1022,292 @@ workspaces:
     subPath: my-subdir
 ```
 
+`workspaces[].subPath` can be an absolute value or can reference `pipelineRun` context variables, such as,
+`$(context.pipelineRun.name)` or `$(context.pipelineRun.uid)`.
+
+You can pass in extra `Workspaces` if needed depending on your use cases. An example use
+case is when your CI system autogenerates `PipelineRuns` and it has `Workspaces` it wants to
+provide to all `PipelineRuns`. Because you can pass in extra `Workspaces`, you don't have to
+go through the complexity of checking each `Pipeline` and providing only the required `Workspaces`:
+
+```yaml
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline
+spec:
+  tasks:
+    - name: task
+---
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pipelinerun
+spec:
+  pipelineRef:
+    name: pipeline
+  workspaces:
+    - name: unusedworkspace
+      persistentVolumeClaim:
+        claimName: mypvc
+```
+
 For more information, see the following topics:
 - For information on mapping `Workspaces` to `Volumes`, see [Specifying `Workspaces` in `PipelineRuns`](workspaces.md#specifying-workspaces-in-pipelineruns).
 - For a list of supported `Volume` types, see [Specifying `VolumeSources` in `Workspaces`](workspaces.md#specifying-volumesources-in-workspaces).
-- For an end-to-end example, see [`Workspaces` in a `PipelineRun`](../examples/v1beta1/pipelineruns/workspaces.yaml).
+- For an end-to-end example, see [`Workspaces` in a `PipelineRun`](../examples/v1/pipelineruns/workspaces.yaml).
 
 [`Custom tasks`](pipelines.md#using-custom-tasks) may or may not use workspaces.
 Consult the documentation of the custom task that you are using to determine whether it supports workspaces.
+
+#### Propagated Workspaces
+
+When using an embedded spec, workspaces from the parent `PipelineRun` will be
+propagated to any inlined specs without needing to be explicitly defined. This
+allows authors to simplify specs by automatically propagating top-level
+workspaces down to other inlined resources.
+**Workspace substutions will only be made for `commands`, `args` and `script` fields of `steps`, `stepTemplates`, and `sidecars`.**
+
+```yaml
+# Inline specifications of a PipelineRun
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: recipe-time-
+spec:
+  workspaces:
+    - name: shared-data
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 16Mi
+          volumeMode: Filesystem
+  pipelineSpec:
+    #workspaces:
+    #  - name: shared-data
+    tasks:
+    - name: fetch-secure-data
+      # workspaces:
+      #   - name: shared-data
+      taskSpec:
+        # workspaces:
+        #   - name: shared-data
+        steps:
+        - name: fetch-and-write-secure
+          image: ubuntu
+          script: |
+            echo hi >> $(workspaces.shared-data.path)/recipe.txt
+    - name: print-the-recipe
+      # workspaces:
+      #   - name: shared-data
+      runAfter:
+        - fetch-secure-data
+      taskSpec:
+        # workspaces:
+        #   - name: shared-data
+        steps:
+        - name: print-secrets
+          image: ubuntu
+          script: cat $(workspaces.shared-data.path)/recipe.txt
+```
+
+On executing the pipeline run, the workspaces will be interpolated during resolution.
+
+```yaml
+# Successful execution of the above PipelineRun
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: recipe-time-
+  ...
+spec:
+  pipelineSpec:
+  ...
+status:
+  completionTime: "2022-06-02T18:17:02Z"
+  conditions:
+  - lastTransitionTime: "2022-06-02T18:17:02Z"
+    message: 'Tasks Completed: 2 (Failed: 0, Canceled 0), Skipped: 0'
+    reason: Succeeded
+    status: "True"
+    type: Succeeded
+  pipelineSpec:
+    ...
+  childReferences:
+  - name: recipe-time-lslt9-fetch-secure-data
+    pipelineTaskName: fetch-secure-data
+    kind: TaskRun
+  - name: recipe-time-lslt9-print-the-recipe
+    pipelineTaskName: print-the-recipe
+    kind: TaskRun
+```
+
+##### Workspace Referenced Resources
+
+`Workspaces` cannot be propagated to referenced specifications. For example, the following Pipeline will fail when executed because the workspaces defined in the PipelineRun cannot be propagated to the referenced Pipeline.
+
+```yaml
+# PipelineRun attempting to propagate Workspaces to referenced Tasks
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-task-storage
+spec:
+  resources:
+    requests:
+      storage: 16Mi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+---
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: fetch-and-print-recipe
+spec:
+  tasks:
+  - name: fetch-the-recipe
+    taskRef:
+      name: fetch-secure-data
+  - name: print-the-recipe
+    taskRef:
+      name: print-data
+    runAfter:
+      - fetch-the-recipe
+---
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: recipe-time-
+spec:
+  pipelineRef:
+    name: fetch-and-print-recipe
+  workspaces:
+  - name: shared-data
+    persistentVolumeClaim:
+      claimName: shared-task-storage
+```
+
+Upon execution, this will cause failures:
+
+```yaml
+# Failed execution of the above PipelineRun
+
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: recipe-time-
+  ...
+spec:
+  pipelineRef:
+    name: fetch-and-print-recipe
+  workspaces:
+  - name: shared-data
+    persistentVolumeClaim:
+      claimName: shared-task-storage
+status:
+  completionTime: "2022-06-02T19:02:58Z"
+  conditions:
+  - lastTransitionTime: "2022-06-02T19:02:58Z"
+    message: 'Tasks Completed: 1 (Failed: 1, Canceled 0), Skipped: 1'
+    reason: Failed
+    status: "False"
+    type: Succeeded
+  pipelineSpec:
+    ...
+  childReferences:
+  - name: recipe-time-v5scg-fetch-the-recipe
+    pipelineTaskName: fetch-the-recipe
+    kind: TaskRun
+```
+
+#### Referenced TaskRuns within Embedded PipelineRuns
+As mentioned in the [Workspace Referenced Resources](#workspace-referenced-resources), workspaces can only be propagated from PipelineRuns to embedded Pipeline specs, not Pipeline references. Similarly, workspaces can only be propagated from a Pipeline to embedded Task specs, not referenced Tasks. For example:
+
+```yaml
+# PipelineRun attempting to propagate Workspaces to referenced Tasks
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: fetch-secure-data
+spec:
+  workspaces: # If Referenced, Workspaces need to be explicitly declared
+  - name: shared-data
+  steps:
+  - name: fetch-and-write
+    image: ubuntu
+    script: |
+      echo $(workspaces.shared-data.path)
+---
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: recipe-time-
+spec:
+  workspaces:
+  - name: shared-data
+    persistentVolumeClaim:
+      claimName: shared-task-storage
+  pipelineSpec:
+    # workspaces: # Since this is embedded specs, Workspaces don’t need to be declared
+    #    ...
+    tasks:
+    - name: fetch-the-recipe
+      workspaces: # If referencing resources, Workspaces need to be explicitly declared
+      - name: shared-data
+      taskRef: # Referencing a resource
+        name: fetch-secure-data
+    - name: print-the-recipe
+      # workspaces: # Since this is embedded specs, Workspaces don’t need to be declared
+      #    ...
+      taskSpec:
+        # workspaces: # Since this is embedded specs, Workspaces don’t need to be declared
+        #    ...
+        steps:
+        - name: print-secrets
+          image: ubuntu
+          script: cat $(workspaces.shared-data.path)/recipe.txt
+      runAfter:
+        - fetch-the-recipe
+```
+
+The above pipelinerun successfully resolves to:
+
+```yaml
+# Successful execution of the above PipelineRun
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: recipe-time-
+  ...
+spec:
+  pipelineSpec:
+    ...
+  workspaces:
+  - name: shared-data
+    persistentVolumeClaim:
+      claimName: shared-task-storage
+status:
+  completionTime: "2022-06-09T18:42:14Z"
+  conditions:
+  - lastTransitionTime: "2022-06-09T18:42:14Z"
+    message: 'Tasks Completed: 2 (Failed: 0, Cancelled 0), Skipped: 0'
+    reason: Succeeded
+    status: "True"
+    type: Succeeded
+  pipelineSpec:
+    ...
+  childReferences:
+  - name: recipe-time-pj6l7-fetch-the-recipe
+    pipelineTaskName: fetch-the-recipe
+    kind: TaskRun
+  - name: recipe-time-pj6l7-print-the-recipe
+    pipelineTaskName: print-the-recipe
+    kind: TaskRun
+```
 
 ### Specifying `LimitRange` values
 
@@ -513,7 +1320,21 @@ For more information, see the [`LimitRange` support in Pipeline](./compute-resou
 
 ### Configuring a failure timeout
 
-You can use the `timeouts` field to set the `PipelineRun's` desired timeout value in minutes.  There are three sub-fields than can be used to specify failures timeout for the entire pipeline, for tasks, and for `finally` tasks.
+You can use the `timeouts` field to set the `PipelineRun's` desired timeout value in minutes.
+There are three sub-fields:
+- `pipeline`: specifies the timeout for the entire PipelineRun. Defaults to to the global configurable default timeout of 60 minutes.
+When `timeouts.pipeline` has elapsed, any running child TaskRuns will be canceled, regardless of whether they are normal Tasks
+or `finally` Tasks, and the PipelineRun will fail.
+- `tasks`: specifies the timeout for the cumulative time taken by non-`finally` Tasks specified in `pipeline.spec.tasks`.
+To specify a timeout for an individual Task, use `pipeline.spec.tasks[].timeout`.
+When `timeouts.tasks` has elapsed, any running child TaskRuns will be canceled, finally Tasks will run if `timeouts.finally` is specified,
+and the PipelineRun will fail.
+- `finally`: the timeout for the cumulative time taken by `finally` Tasks specified in `pipeline.spec.finally`.
+(Since all `finally` Tasks run in parallel, this is functionally equivalent to the timeout for any `finally` Task.)
+When `timeouts.finally` has elapsed, any running `finally` TaskRuns will be canceled,
+and the PipelineRun will fail.
+
+For example:
 
 ```yaml
 timeouts:
@@ -521,10 +1342,23 @@ timeouts:
   tasks: "0h0m40s"
   finally: "0h0m20s"
 ```
+
 All three sub-fields are optional, and will be automatically processed according to the following constraint:
 * `timeouts.pipeline >= timeouts.tasks + timeouts.finally`
 
-You may combine the timeouts as follow:
+Each `timeout` field is a `duration` conforming to Go's
+[`ParseDuration`](https://golang.org/pkg/time/#ParseDuration) format. For example, valid
+values are `1h30m`, `1h`, `1m`, and `60s`.
+
+If any of the sub-fields are set to "0", there is no timeout for that section of the PipelineRun,
+meaning that it will run until it completes successfully or encounters an error.
+To set `timeouts.tasks` or `timeouts.finally` to "0", you must also set `timeouts.pipeline` to "0".
+
+The global default timeout is set to 60 minutes when you first install Tekton. You can set
+a different global default timeout value using the `default-timeout-minutes` field in
+[`config/config-defaults.yaml`](./../config/config-defaults.yaml).
+
+Example timeouts usages are as follows:
 
 Combination 1: Set the timeout for the entire `pipeline` and reserve a portion of it for `tasks`.
 
@@ -546,67 +1380,64 @@ spec:
     finally: "0h3m0s"
 ```
 
+Combination 3: Set only a `tasks` timeout, with no timeout for the entire `pipeline`.
+
+```yaml
+kind: PipelineRun
+spec:
+  timeouts:
+    pipeline: "0"  # No timeout
+    tasks: "0h3m0s"
+```
+
+Combination : Set only a `finally` timeout, with no timeout for the entire `pipeline`.
+
+```yaml
+kind: PipelineRun
+spec:
+  timeouts:
+    pipeline: "0"  # No timeout
+    finally: "0h3m0s"
+```
+
 You can also use the *Deprecated* `timeout` field to set the `PipelineRun's` desired timeout value in minutes.
 If you do not specify this value in the `PipelineRun`, the global default timeout value applies.
 If you set the timeout to 0, the `PipelineRun` fails immediately upon encountering an error.
 
 > :warning: ** `timeout` is deprecated and will be removed in future versions. Consider using `timeouts` instead.
 
-If you do not specify the `timeout` value or `timeouts.pipeline` in the `PipelineRun`, the global default timeout value applies.
-If you set the `timeout` value or `timeouts.pipeline` to 0, the `PipelineRun` fails immediately upon encountering an error.
-If `timeouts.tasks` or `timeouts.finally` is set to 0, `timeouts.pipeline` must also be set to 0.
-
-The global default timeout is set to 60 minutes when you first install Tekton. You can set
-a different global default timeout value using the `default-timeout-minutes` field in
-[`config/config-defaults.yaml`](./../config/config-defaults.yaml).
-
-The `timeout` value is a `duration` conforming to Go's
-[`ParseDuration`](https://golang.org/pkg/time/#ParseDuration) format. For example, valid
-values are `1h30m`, `1h`, `1m`, and `60s`. If you set the global timeout to 0, all `PipelineRuns`
-that do not have an individual timeout set will fail immediately upon encountering an error.
+> :note: An internal detail of the `PipelineRun` and `TaskRun` reconcilers in the Tekton controller is that it will requeue a `PipelineRun` or `TaskRun` for re-evaluation, versus waiting for the next update, under certain conditions.  The wait time for that re-queueing is the elapsed time subtracted from the timeout; however, if the timeout is set to '0', that calculation produces a negative number, and the new reconciliation event will fire immediately, which can impact overall performance, which is counter to the intent of wait time calculation.  So instead, the reconcilers will use the configured global timeout as the wait time when the associated timeout has been set to '0'.
 
 ## `PipelineRun` status
 
 ### The `status` field
 
 Your `PipelineRun`'s `status` field can contain the following fields:
-
 - Required:
-  - `status` - Most relevant, `status.conditions`, which contains the latest observations of the `PipelineRun`'s state. [See here](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties) for information on typical status properties. 
+  <!-- wokeignore:rule=master -->
+  - `status` - Most relevant, `status.conditions`, which contains the latest observations of the `PipelineRun`'s state. [See here](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties) for information on typical status properties.
   - `startTime` - The time at which the `PipelineRun` began executing, in [RFC3339](https://tools.ietf.org/html/rfc3339) format.
   - `completionTime` - The time at which the `PipelineRun` finished executing, in [RFC3339](https://tools.ietf.org/html/rfc3339) format.
   - [`pipelineSpec`](pipelines.md#configuring-a-pipeline) - The exact `PipelineSpec` used when starting the `PipelineRun`.
 - Optional:
-  - `taskRuns` - A map of `TaskRun` names to detailed information about the status of that `TaskRun`. This is deprecated and will be removed in favor of using `childReferences`.
-  - `runs` - A map of custom task `Run` names to detailed information about the status of that `Run`. This is deprecated and will be removed in favor of using `childReferences`.
   - [`pipelineResults`](pipelines.md#emitting-results-from-a-pipeline) - Results emitted by this `PipelineRun`.
   - `skippedTasks` - A list of `Task`s which were skipped when running this `PipelineRun` due to [when expressions](pipelines.md#guard-task-execution-using-when-expressions), including the when expressions applying to the skipped task.
   - `childReferences` - A list of references to each `TaskRun` or `Run` in this `PipelineRun`, which can be used to look up the status of the underlying `TaskRun` or `Run`. Each entry contains the following:
     - [`kind`][kubernetes-overview] - Generally either `TaskRun` or `Run`.
     - [`apiVersion`][kubernetes-overview] - The API version for the underlying `TaskRun` or `Run`.
-    - `conditionChecks` - A list of [condition checks](conditions.md) performed for this `TaskRun`. `conditions` are deprecated and this will be removed in the future.
     - [`whenExpressions`](pipelines.md#guard-task-execution-using-when-expressions) - The list of when expressions guarding the execution of this task.
-
-### Configuring usage of `TaskRun` and `Run` embedded statuses
-
-Currently, the default behavior is for the statuses of `TaskRun`s and `Run`s within this `PipelineRun`
-to be embedded in the `status.taskRuns` and `status.runs` fields. This will change in the future to
-instead default to `status.childReferences` being populated with references to the `TaskRun`s and
-`Run`s, which can be used to look up their statuses.
-
-This behavior can be controlled by changing the `embedded-status` feature flag in the `feature-flags`
-config map. See [`install.md`](./install.md#customizing-the-pipelines-controller-behavior) for more
-information on feature flags. The possible values for `embedded-status` are:
-- `full` - The current default behavior of populating `status.taskRuns` and `status.runs`, without populating `status.childReferences`.
-- `minimal` - Just populate `status.childReferences`, not `status.taskRuns` or `status.runs`.
-- `both` - Populate `status.childReferences` as well as `status.taskRuns` and `status.runs`.
+  - `provenance` - Metadata about the runtime configuration and the resources used in the PipelineRun. The data in the `provenance` field will be recorded into the build provenance by the provenance generator i.e. (Tekton Chains). Currently, there are 2 subfields:
+    - `refSource`: the source from where a remote pipeline definition was fetched.
+    - `featureFlags`: the configuration data of the `feature-flags` configmap.
+  - `finallyStartTime`- The time at which the PipelineRun's `finally` Tasks, if any, began
+  executing, in [RFC3339](https://tools.ietf.org/html/rfc3339) format.
 
 ### Monitoring execution status
 
 As your `PipelineRun` executes, its `status` field accumulates information on the execution of each `TaskRun`
 as well as the `PipelineRun` as a whole. This information includes the name of the pipeline `Task` associated
 to a `TaskRun`, the complete [status of the `TaskRun`](taskruns.md#monitoring-execution-status) and details
-about `Conditions` that may be associated to a `TaskRun`.
+about `whenExpressions` that may be associated to a `TaskRun`.
 
 The following example shows an extract from the `status` field of a `PipelineRun` that has executed successfully:
 
@@ -619,50 +1450,27 @@ conditions:
     status: "True"
     type: Succeeded
 startTime: "2020-05-04T02:00:11Z"
-taskRuns:
-  triggers-release-nightly-frwmw-build:
-    pipelineTaskName: build
-    status:
-      completionTime: "2020-05-04T02:10:49Z"
-      conditions:
-        - lastTransitionTime: "2020-05-04T02:10:49Z"
-          message: All Steps have completed executing
-          reason: Succeeded
-          status: "True"
-          type: Succeeded
-      podName: triggers-release-nightly-frwmw-build-pod
-      resourcesResult:
-        - key: commit
-          resourceRef:
-            name: git-source-triggers-frwmw
-          value: 9ab5a1234166a89db352afa28f499d596ebb48db
-      startTime: "2020-05-04T02:05:07Z"
-      steps:
-        - container: step-build
-          imageID: docker-pullable://golang@sha256:a90f2671330831830e229c3554ce118009681ef88af659cd98bfafd13d5594f9
-          name: build
-          terminated:
-            containerID: docker://6b6471f501f59dbb7849f5cdde200f4eeb64302b862a27af68821a7fb2c25860
-            exitCode: 0
-            finishedAt: "2020-05-04T02:10:45Z"
-            reason: Completed
-            startedAt: "2020-05-04T02:06:24Z"
+childReferences:
+- name: triggers-release-nightly-frwmw-build
+  pipelineTaskName: build
+  kind: TaskRun
   ```
 
 The following tables shows how to read the overall status of a `PipelineRun`.
 Completion time is set once a `PipelineRun` reaches status `True` or `False`:
 
-`status`|`reason`|`completionTime` is set|Description
-:-------|:-------|:---------------------:|--------------:
-Unknown|Started|No|The `PipelineRun` has just been picked up by the controller.
-Unknown|Running|No|The `PipelineRun` has been validate and started to perform its work.
-Unknown|Cancelled|No|The user requested the PipelineRun to be cancelled. Cancellation has not be done yet.
-True|Succeeded|Yes|The `PipelineRun` completed successfully.
-True|Completed|Yes|The `PipelineRun` completed successfully, one or more Tasks were skipped.
-False|Failed|Yes|The `PipelineRun` failed because one of the `TaskRuns` failed.
-False|\[Error message\]|Yes|The `PipelineRun` failed with a permanent error (usually validation).
-False|Cancelled|Yes|The `PipelineRun` was cancelled successfully.
-False|PipelineRunTimeout|Yes|The `PipelineRun` timed out.
+`status` | `reason`           | `completionTime` is set |                                                                           Description
+:--------|:-------------------|:-----------------------:|-------------------------------------------------------------------------------------:
+Unknown  | Started            |           No            |                          The `PipelineRun` has just been picked up by the controller.
+Unknown  | Running            |           No            |                  The `PipelineRun` has been validate and started to perform its work.
+Unknown  | Cancelled          |           No            | The user requested the PipelineRun to be cancelled. Cancellation has not be done yet.
+True     | Succeeded          |           Yes           |                                             The `PipelineRun` completed successfully.
+True     | Completed          |           Yes           |             The `PipelineRun` completed successfully, one or more Tasks were skipped.
+False    | Failed             |           Yes           |                        The `PipelineRun` failed because one of the `TaskRuns` failed.
+False    | \[Error message\]  |           Yes           |                 The `PipelineRun` failed with a permanent error (usually validation).
+False    | Cancelled          |           Yes           |                                         The `PipelineRun` was cancelled successfully.
+False    | PipelineRunTimeout |           Yes           |                                                          The `PipelineRun` timed out.
+False    | CreateRunFailed    |           Yes           |                                        The `PipelineRun` create run resources failed.
 
 When a `PipelineRun` changes status, [events](events.md#pipelineruns) are triggered accordingly.
 
@@ -691,31 +1499,57 @@ Skipped Tasks:
     Operator:  notin
     Values:
       foo
-Task Runs:
-  pipelinerun-to-skip-task-run-this-task:
-    Pipeline Task Name:  run-this-task
-    Status:
-      ...
-    When Expressions:
-      Input:     foo
-      Operator:  in
-      Values:
-        foo
+ChildReferences:
+- Name: pipelinerun-to-skip-task-run-this-task
+  Pipeline Task Name:  run-this-task
+  Kind: TaskRun
 ```
 
 The name of the `TaskRuns` and `Runs` owned by a `PipelineRun`  are univocally associated to the owning resource.
 If a `PipelineRun` resource is deleted and created with the same name, the child `TaskRuns` will be created with the
-same name as before. The base format of the name is `<pipelinerun-name>-<pipelinetask-name>`. The name may vary
-according the logic of [`kmeta.ChildName`](https://pkg.go.dev/github.com/knative/pkg/kmeta#ChildName).
+same name as before. The base format of the name is `<pipelinerun-name>-<pipelinetask-name>`. If the `PipelineTask`
+has a `Matrix`, the name will have an int suffix with format `<pipelinerun-name>-<pipelinetask-name>-<combination-id>`.
+The name may vary according the logic of [`kmeta.ChildName`](https://pkg.go.dev/github.com/knative/pkg/kmeta#ChildName).
 
 Some examples:
 
-| `PipelineRun` Name       | `PipelineTask` Name          | `TaskRun` Name     |
-|--------------------------|------------------------------|--------------------|
-| pipeline-run             | task1                        | pipeline-run-task1 |
-| pipeline-run             | task2-0123456789-0123456789-0123456789-0123456789-0123456789 | pipeline-runee4a397d6eab67777d4e6f9991cd19e6-task2-0123456789-0 |
-| pipeline-run-0123456789-0123456789-0123456789-0123456789 | task3 | pipeline-run-0123456789-0123456789-0123456789-0123456789-task3 |
-| pipeline-run-0123456789-0123456789-0123456789-0123456789 | task2-0123456789-0123456789-0123456789-0123456789-0123456789 | pipeline-run-0123456789-012345607ad8c7aac5873cdfabe472a68996b5c |
+| `PipelineRun` Name                                       | `PipelineTask` Name                                          | `TaskRun` Names                                                                        |
+|----------------------------------------------------------|--------------------------------------------------------------|----------------------------------------------------------------------------------------|
+| pipeline-run                                             | task1                                                        | pipeline-run-task1                                                                     |
+| pipeline-run                                             | task2-0123456789-0123456789-0123456789-0123456789-0123456789 | pipeline-runee4a397d6eab67777d4e6f9991cd19e6-task2-0123456789-0                        |
+| pipeline-run-0123456789-0123456789-0123456789-0123456789 | task3                                                        | pipeline-run-0123456789-0123456789-0123456789-0123456789-task3                         |
+| pipeline-run-0123456789-0123456789-0123456789-0123456789 | task2-0123456789-0123456789-0123456789-0123456789-0123456789 | pipeline-run-0123456789-012345607ad8c7aac5873cdfabe472a68996b5c                        |
+| pipeline-run                                             | task4 (with 2x2 `Matrix`)                                    | pipeline-run-task1-0, pipeline-run-task1-2, pipeline-run-task1-3, pipeline-run-task1-4 |
+
+### Marking off user errors
+
+A user error in Tekton is any mistake made by user, such as a syntax error when specifying pipelines, tasks. User errors can occur in various stages of the Tekton pipeline, from authoring the pipeline configuration to executing the pipelines. They are currently explicitly labeled in the Run's conditions message, for example:
+
+```yaml
+# Failed PipelineRun with message labeled "[User error]"
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  ...
+spec:
+  ...
+status:
+  ...
+  conditions:
+  - lastTransitionTime: "2022-06-02T19:02:58Z"
+    message: '[User error] PipelineRun default parameters is missing some parameters required by
+      Pipeline pipelinerun-with-params''s parameters: pipelineRun missing parameters:
+      [pl-param-x]'
+    reason: 'ParameterMissing'
+    status: "False"
+    type: Succeeded
+```
+
+```console
+~/pipeline$ tkn pr list
+NAME                      STARTED         DURATION   STATUS
+pipelinerun-with-params   5 seconds ago   0s         Failed(ParameterMissing)
+```
 
 ## Cancelling a `PipelineRun`
 
@@ -727,7 +1561,7 @@ Pending `finally` tasks are not scheduled.
 For example:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   name: go-example-git
@@ -746,7 +1580,7 @@ as cancelled, all associated `Pods` are deleted, and their `Retries` are not exe
 For example:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   name: go-example-git
@@ -764,7 +1598,7 @@ including executing their `retries`, but no new non-`finally` task is scheduled.
 For example:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   name: go-example-git
@@ -782,7 +1616,7 @@ Note that a `PipelineRun` can only be marked "pending" before it has started, th
 To mark a `PipelineRun` as pending, set `.spec.status` to `PipelineRunPending` when creating it:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   name: go-example-git

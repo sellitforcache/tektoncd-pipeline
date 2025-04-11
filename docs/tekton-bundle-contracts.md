@@ -1,7 +1,7 @@
 <!--
 ---
 linkTitle: "Tekton Bundles Contract"
-weight: 1800
+weight: 402
 ---
 -->
 
@@ -17,14 +17,14 @@ bundle reference.
 
 Each layer of the image must map 1:1 with a single Tekton resource (eg Task).
 
-*No more than 10* individual layers (Pipelines and/or Tasks) maybe placed in a single image.
+*No more than 20* individual layers (Pipelines and/or Tasks) maybe placed in a single image.
 
 Each layer must contain all of the following annotations:
 
 - `dev.tekton.image.name` => `ObjectMeta.Name` of the resource
 - `dev.tekton.image.kind` => `TypeMeta.Kind` of the resource, all lower-cased and singular (eg, `task`)
 - `dev.tekton.image.apiVersion` => `TypeMeta.APIVersion` of the resource (eg 
-"tekton.dev/v1alpha1")  
+"tekton.dev/v1beta1")  
 
 The union of the { `dev.tekton.image.apiVersion`, `dev.tekton.image.kind`, `dev.tekton.image.name` }
 annotations on a given layer must be unique among all layers of that image. In practical terms, this means no two
@@ -32,6 +32,7 @@ annotations on a given layer must be unique among all layers of that image. In p
 
 Each layer must be compressed and stored with a supported OCI MIME type *except* for `+zstd` types. For list of the 
 supported types see 
+<!-- wokeignore:rule=master --> 
 [the official spec](https://github.com/opencontainers/image-spec/blob/master/layer.md#zstd-media-types).
  
 Furthermore, each layer must contain a YAML or JSON representation of the underlying resource. If the resource is 

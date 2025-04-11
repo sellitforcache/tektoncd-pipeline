@@ -28,6 +28,7 @@ func TestAllowsExecution(t *testing.T) {
 	tests := []struct {
 		name            string
 		whenExpressions WhenExpressions
+		evaluatedCEL    map[string]bool
 		expected        bool
 	}{{
 		name: "in expression",
@@ -77,10 +78,57 @@ func TestAllowsExecution(t *testing.T) {
 			},
 		},
 		expected: true,
-	}}
+	}, {
+		name: "CEL is true",
+		whenExpressions: WhenExpressions{
+			{
+				CEL: "'foo'=='foo'",
+			},
+		},
+		evaluatedCEL: map[string]bool{"'foo'=='foo'": true},
+		expected:     true,
+	}, {
+		name: "CEL is false",
+		whenExpressions: WhenExpressions{
+			{
+				CEL: "'foo'!='foo'",
+			},
+		},
+		evaluatedCEL: map[string]bool{"'foo'!='foo'": false},
+		expected:     false,
+	},
+		{
+			name: "multiple expressions - 1. CEL is true 2. In Op is false, expect false",
+			whenExpressions: WhenExpressions{
+				{
+					CEL: "'foo'=='foo'",
+				},
+				{
+					Input:    "foo",
+					Operator: selection.In,
+					Values:   []string{"bar"},
+				},
+			},
+			evaluatedCEL: map[string]bool{"'foo'=='foo'": true},
+			expected:     false,
+		},
+		{
+			name: "multiple expressions - 1. CEL is true 2. CEL is false, expect false",
+			whenExpressions: WhenExpressions{
+				{
+					CEL: "'foo'!='foo'",
+				},
+				{
+					CEL: "'xxx'!='xxx'",
+				},
+			},
+			evaluatedCEL: map[string]bool{"'foo'=='foo'": true, "'xxx'!='xxx'": false},
+			expected:     false,
+		},
+	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.whenExpressions.AllowsExecution()
+			got := tc.whenExpressions.AllowsExecution(tc.evaluatedCEL)
 			if d := cmp.Diff(tc.expected, got); d != "" {
 				t.Errorf("Error evaluating AllowsExecution() for When Expressions in test case %s", diff.PrintWantGot(d))
 			}
@@ -201,7 +249,7 @@ func TestReplaceWhenExpressionsVariables(t *testing.T) {
 	}}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.whenExpressions.ReplaceWhenExpressionsVariables(tc.replacements, nil)
+			got := tc.whenExpressions.ReplaceVariables(tc.replacements, nil)
 			if d := cmp.Diff(tc.expected, got); d != "" {
 				t.Errorf("Error evaluating When Expressions in test case %s", diff.PrintWantGot(d))
 			}
@@ -247,6 +295,43 @@ func TestApplyReplacements(t *testing.T) {
 			Input:    "foobar",
 			Operator: selection.In,
 			Values:   []string{"barfoo"},
+		},
+	}, {
+		name: "replace array results variables",
+		original: &WhenExpression{
+			Input:    "$(tasks.foo.results.bar)",
+			Operator: selection.In,
+			Values:   []string{"$(tasks.aTask.results.aResult[*])"},
+		},
+		replacements: map[string]string{
+			"tasks.foo.results.bar": "foobar",
+		},
+		arrayReplacements: map[string][]string{
+			"tasks.aTask.results.aResult": {"dev", "stage"},
+		},
+		expected: &WhenExpression{
+			Input:    "foobar",
+			Operator: selection.In,
+			Values:   []string{"dev", "stage"},
+		},
+	}, {
+		name: "invaliad array results replacements",
+		original: &WhenExpression{
+			Input:    "$(tasks.foo.results.bar)",
+			Operator: selection.In,
+			Values:   []string{"$(tasks.aTask.results.aResult[invalid])"},
+		},
+		replacements: map[string]string{
+			"tasks.foo.results.bar":          "foobar",
+			"tasks.aTask.results.aResult[*]": "barfoo",
+		},
+		arrayReplacements: map[string][]string{
+			"tasks.aTask.results.aResult[*]": {"dev", "stage"},
+		},
+		expected: &WhenExpression{
+			Input:    "foobar",
+			Operator: selection.In,
+			Values:   []string{"$(tasks.aTask.results.aResult[invalid])"},
 		},
 	}, {
 		name: "replace array params",

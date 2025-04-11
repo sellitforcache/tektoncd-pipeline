@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/tektoncd/pipeline/pkg/apis/config"
+	pod "github.com/tektoncd/pipeline/pkg/apis/pipeline/pod"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/pkg/apis"
+	"knative.dev/pkg/kmap"
 )
 
 var _ apis.Defaultable = (*TaskRun)(nil)
@@ -34,6 +36,13 @@ const ManagedByLabelKey = "app.kubernetes.io/managed-by"
 func (tr *TaskRun) SetDefaults(ctx context.Context) {
 	ctx = apis.WithinParent(ctx, tr.ObjectMeta)
 	tr.Spec.SetDefaults(ctx)
+
+	// Silently filtering out Tekton Reserved annotations at creation
+	if apis.IsInCreate(ctx) {
+		tr.ObjectMeta.Annotations = kmap.Filter(tr.ObjectMeta.Annotations, func(s string) bool {
+			return filterReservedAnnotationRegexp.MatchString(s)
+		})
+	}
 
 	// If the TaskRun doesn't have a managed-by label, apply the default
 	// specified in the config.
@@ -49,8 +58,13 @@ func (tr *TaskRun) SetDefaults(ctx context.Context) {
 // SetDefaults implements apis.Defaultable
 func (trs *TaskRunSpec) SetDefaults(ctx context.Context) {
 	cfg := config.FromContextOrDefaults(ctx)
-	if trs.TaskRef != nil && trs.TaskRef.Kind == "" {
-		trs.TaskRef.Kind = NamespacedTaskKind
+	if trs.TaskRef != nil {
+		if trs.TaskRef.Name == "" && trs.TaskRef.Resolver == "" {
+			trs.TaskRef.Resolver = ResolverName(cfg.Defaults.DefaultResolverType)
+		}
+		if trs.TaskRef.Kind == "" && trs.TaskRef.Resolver == "" {
+			trs.TaskRef.Kind = NamespacedTaskKind
+		}
 	}
 
 	if trs.Timeout == nil {
@@ -63,14 +77,10 @@ func (trs *TaskRunSpec) SetDefaults(ctx context.Context) {
 	}
 
 	defaultPodTemplate := cfg.Defaults.DefaultPodTemplate
-	trs.PodTemplate = MergePodTemplateWithDefault(trs.PodTemplate, defaultPodTemplate)
+	trs.PodTemplate = pod.MergePodTemplateWithDefault(trs.PodTemplate, defaultPodTemplate)
 
 	// If this taskrun has an embedded task, apply the usual task defaults
 	if trs.TaskSpec != nil {
 		trs.TaskSpec.SetDefaults(ctx)
-
-		if config.FromContextOrDefaults(ctx).FeatureFlags.EnableAPIFields == "alpha" {
-			trs.TaskSpec.applyImplicitParams(addContextParams(ctx, trs.Params))
-		}
 	}
 }

@@ -31,6 +31,7 @@ func main() {
 	log.Print("Hello world sample started.")
 
 	http.HandleFunc("/", handler)
+	//nolint: gosec
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		panic(err)
 	}

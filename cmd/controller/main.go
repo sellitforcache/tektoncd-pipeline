@@ -25,11 +25,11 @@ import (
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/reconciler/pipelinerun"
-	"github.com/tektoncd/pipeline/pkg/reconciler/run"
+	"github.com/tektoncd/pipeline/pkg/reconciler/resolutionrequest"
 	"github.com/tektoncd/pipeline/pkg/reconciler/taskrun"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/clock"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/injection"
@@ -51,15 +51,12 @@ func main() {
 
 	opts := &pipeline.Options{}
 	flag.StringVar(&opts.Images.EntrypointImage, "entrypoint-image", "", "The container image containing our entrypoint binary.")
+	flag.StringVar(&opts.Images.SidecarLogResultsImage, "sidecarlogresults-image", "", "The container image containing the binary for accessing results.")
 	flag.StringVar(&opts.Images.NopImage, "nop-image", "", "The container image used to stop sidecars")
-	flag.StringVar(&opts.Images.GitImage, "git-image", "", "The container image containing our Git binary.")
-	flag.StringVar(&opts.Images.KubeconfigWriterImage, "kubeconfig-writer-image", "", "The container image containing our kubeconfig writer binary.")
 	flag.StringVar(&opts.Images.ShellImage, "shell-image", "", "The container image containing a shell")
 	flag.StringVar(&opts.Images.ShellImageWin, "shell-image-win", "", "The container image containing a windows shell")
-	flag.StringVar(&opts.Images.GsutilImage, "gsutil-image", "", "The container image containing gsutil")
-	flag.StringVar(&opts.Images.PRImage, "pr-image", "", "The container image containing our PR binary.")
-	flag.StringVar(&opts.Images.ImageDigestExporterImage, "imagedigest-exporter-image", "", "The container image containing our image digest exporter binary.")
 	flag.StringVar(&opts.Images.WorkingDirInitImage, "workingdirinit-image", "", "The container image containing our working dir init binary.")
+	flag.DurationVar(&opts.ResyncPeriod, "resync-period", controller.DefaultResyncPeriod, "The period between two resync run (going through all objects)")
 
 	// This parses flags.
 	cfg := injection.ParseAndGetRESTConfigOrDie()
@@ -98,14 +95,16 @@ func main() {
 	go func() {
 		// start the web server on port and accept requests
 		log.Printf("Readiness and health check server listening on port %s", port)
-		log.Fatal(http.ListenAndServe(":"+port, mux))
+		log.Fatal(http.ListenAndServe(":"+port, mux)) // #nosec G114 -- see https://github.com/securego/gosec#available-rules
 	}()
 
 	ctx = filteredinformerfactory.WithSelectors(ctx, v1beta1.ManagedByLabelKey)
+	ctx = controller.WithResyncPeriod(ctx, opts.ResyncPeriod)
+
 	sharedmain.MainWithConfig(ctx, ControllerLogKey, cfg,
 		taskrun.NewController(opts, clock.RealClock{}),
 		pipelinerun.NewController(opts, clock.RealClock{}),
-		run.NewController(),
+		resolutionrequest.NewController(clock.RealClock{}),
 	)
 }
 

@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/tektoncd/pipeline/test/parse"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
@@ -46,13 +45,13 @@ func TestWorkspaceReadOnlyDisallowsWrite(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
-	task := parse.MustParseTask(t, fmt.Sprintf(`
+	task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   steps:
-  - image: alpine
+  - image: mirror.gcr.io/alpine
     script: 'echo foo > /workspace/test/file'
   workspaces:
   - name: test
@@ -60,11 +59,11 @@ spec:
     mountPath: /workspace/test
     readOnly: true
 `, taskName, namespace))
-	if _, err := c.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task: %s", err)
 	}
 
-	taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+	taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -76,16 +75,16 @@ spec:
   - name: test
     emptyDir: {}
 `, taskRunName, namespace, taskName))
-	if _, err := c.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to finish", namespace)
-	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunFailed(taskRunName), "error"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunFailed(taskRunName), "error", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish with error: %s", err)
 	}
 
-	tr, err := c.TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
+	tr, err := c.V1TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
 	if err != nil {
 		t.Errorf("Error retrieving taskrun: %s", err)
 	}
@@ -124,13 +123,13 @@ func TestWorkspacePipelineRunDuplicateWorkspaceEntriesInvalid(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
-	task := parse.MustParseTask(t, fmt.Sprintf(`
+	task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   steps:
-  - image: alpine
+  - image: mirror.gcr.io/alpine
     script: 'cat /workspace/test/file'
   workspaces:
   - name: test
@@ -138,11 +137,11 @@ spec:
     mountPath: /workspace/test
     readOnly: true
 `, taskName, namespace))
-	if _, err := c.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task: %s", err)
 	}
 
-	pipeline := parse.MustParsePipeline(t, fmt.Sprintf(`
+	pipeline := parse.MustParseV1Pipeline(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -157,11 +156,11 @@ spec:
     - name: test
       workspace: foo
 `, pipelineName, namespace, taskName))
-	if _, err := c.PipelineClient.Create(ctx, pipeline, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1PipelineClient.Create(ctx, pipeline, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Pipeline: %s", err)
 	}
 
-	pipelineRun := parse.MustParsePipelineRun(t, fmt.Sprintf(`
+	pipelineRun := parse.MustParseV1PipelineRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -174,7 +173,7 @@ spec:
   - name: foo
     emptyDir: {}
 `, pipelineRunName, namespace, pipelineName))
-	_, err := c.PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{})
+	_, err := c.V1PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{})
 
 	if err == nil || !strings.Contains(err.Error(), "provided by pipelinerun more than once") {
 		t.Fatalf("Expected error when creating pipelinerun with duplicate workspace entries but received: %v", err)
@@ -194,13 +193,13 @@ func TestWorkspacePipelineRunMissingWorkspaceInvalid(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
-	task := parse.MustParseTask(t, fmt.Sprintf(`
+	task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   steps:
-  - image: alpine
+  - image: mirror.gcr.io/alpine
     script: 'cat /workspace/test/file'
   workspaces:
   - name: test
@@ -208,11 +207,11 @@ spec:
     mountPath: /workspace/test
     readOnly: true
 `, taskName, namespace))
-	if _, err := c.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task: %s", err)
 	}
 
-	pipeline := parse.MustParsePipeline(t, fmt.Sprintf(`
+	pipeline := parse.MustParseV1Pipeline(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -227,11 +226,11 @@ spec:
     - name: test
       workspace: foo
 `, pipelineName, namespace, taskName))
-	if _, err := c.PipelineClient.Create(ctx, pipeline, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1PipelineClient.Create(ctx, pipeline, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Pipeline: %s", err)
 	}
 
-	pipelineRun := parse.MustParsePipelineRun(t, fmt.Sprintf(`
+	pipelineRun := parse.MustParseV1PipelineRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -239,11 +238,11 @@ spec:
   pipelineRef:
     name: %s
 `, pipelineRunName, namespace, pipelineName))
-	if _, err := c.PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create PipelineRun: %s", err)
 	}
 
-	if err := WaitForPipelineRunState(ctx, c, pipelineRunName, 10*time.Second, FailedWithMessage(`pipeline requires workspace with name "foo" be provided by pipelinerun`, pipelineRunName), "PipelineRunHasCondition"); err != nil {
+	if err := WaitForPipelineRunState(ctx, c, pipelineRunName, 10*time.Second, FailedWithMessage(`pipeline requires workspace with name "foo" be provided by pipelinerun`, pipelineRunName), "PipelineRunHasCondition", v1Version); err != nil {
 		t.Fatalf("Failed to wait for PipelineRun %q to finish: %s", pipelineRunName, err)
 	}
 }
@@ -263,13 +262,13 @@ func TestWorkspaceVolumeNameMatchesVolumeVariableReplacement(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
-	task := parse.MustParseTask(t, fmt.Sprintf(`
+	task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   steps:
-  - image: alpine
+  - image: mirror.gcr.io/alpine
     name: foo
     command: ['echo']
     args: ['$(workspaces.test.volume)']
@@ -279,11 +278,11 @@ spec:
     mountPath: /workspace/test/file
     readOnly: true
 `, taskName, namespace))
-	if _, err := c.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task: %s", err)
 	}
 
-	taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+	taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -295,16 +294,16 @@ spec:
   - name: test
     emptyDir: {}
 `, taskRunName, namespace, taskName))
-	if _, err := c.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to finish", namespace)
-	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunSucceed(taskRunName), "success"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunSucceed(taskRunName), "success", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish with error: %s", err)
 	}
 
-	tr, err := c.TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
+	tr, err := c.V1TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
 	if err != nil {
 		t.Errorf("Error retrieving taskrun: %s", err)
 	}

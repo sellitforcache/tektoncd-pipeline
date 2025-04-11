@@ -271,23 +271,14 @@ func (r *reconcilerImpl) Reconcile(ctx context.Context, key string) error {
 // updateFinalizersFiltered will update the Finalizers of the resource.
 // TODO: this method could be generic and sync all finalizers. For now it only
 // updates defaultFinalizerName or its override.
-func (r *reconcilerImpl) updateFinalizersFiltered(ctx context.Context, resource *v1beta1.Pipeline) (*v1beta1.Pipeline, error) {
-
-	getter := r.Lister.Pipelines(resource.Namespace)
-
-	actual, err := getter.Get(resource.Name)
-	if err != nil {
-		return resource, err
-	}
-
+func (r *reconcilerImpl) updateFinalizersFiltered(ctx context.Context, resource *v1beta1.Pipeline, desiredFinalizers sets.Set[string]) (*v1beta1.Pipeline, error) {
 	// Don't modify the informers copy.
-	existing := actual.DeepCopy()
+	existing := resource.DeepCopy()
 
 	var finalizers []string
 
 	// If there's nothing to update, just return.
-	existingFinalizers := sets.NewString(existing.Finalizers...)
-	desiredFinalizers := sets.NewString(resource.Finalizers...)
+	existingFinalizers := sets.New[string](existing.Finalizers...)
 
 	if desiredFinalizers.Has(r.finalizerName) {
 		if existingFinalizers.Has(r.finalizerName) {
@@ -303,7 +294,7 @@ func (r *reconcilerImpl) updateFinalizersFiltered(ctx context.Context, resource 
 		}
 		// Remove the finalizer.
 		existingFinalizers.Delete(r.finalizerName)
-		finalizers = existingFinalizers.List()
+		finalizers = sets.List(existingFinalizers)
 	}
 
 	mergePatch := map[string]interface{}{
@@ -337,17 +328,15 @@ func (r *reconcilerImpl) setFinalizerIfFinalizer(ctx context.Context, resource *
 		return resource, nil
 	}
 
-	finalizers := sets.NewString(resource.Finalizers...)
+	finalizers := sets.New[string](resource.Finalizers...)
 
 	// If this resource is not being deleted, mark the finalizer.
 	if resource.GetDeletionTimestamp().IsZero() {
 		finalizers.Insert(r.finalizerName)
 	}
 
-	resource.Finalizers = finalizers.List()
-
 	// Synchronize the finalizers filtered by r.finalizerName.
-	return r.updateFinalizersFiltered(ctx, resource)
+	return r.updateFinalizersFiltered(ctx, resource, finalizers)
 }
 
 func (r *reconcilerImpl) clearFinalizer(ctx context.Context, resource *v1beta1.Pipeline, reconcileEvent reconciler.Event) (*v1beta1.Pipeline, error) {
@@ -358,7 +347,7 @@ func (r *reconcilerImpl) clearFinalizer(ctx context.Context, resource *v1beta1.P
 		return resource, nil
 	}
 
-	finalizers := sets.NewString(resource.Finalizers...)
+	finalizers := sets.New[string](resource.Finalizers...)
 
 	if reconcileEvent != nil {
 		var event *reconciler.ReconcilerEvent
@@ -371,8 +360,6 @@ func (r *reconcilerImpl) clearFinalizer(ctx context.Context, resource *v1beta1.P
 		finalizers.Delete(r.finalizerName)
 	}
 
-	resource.Finalizers = finalizers.List()
-
 	// Synchronize the finalizers filtered by r.finalizerName.
-	return r.updateFinalizersFiltered(ctx, resource)
+	return r.updateFinalizersFiltered(ctx, resource, finalizers)
 }

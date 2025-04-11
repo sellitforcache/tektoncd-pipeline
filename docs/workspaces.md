@@ -1,9 +1,10 @@
 <!--
 ---
 linkTitle: "Workspaces"
-weight: 600
+weight: 405
 ---
 -->
+
 # Workspaces
 
 - [Overview](#overview)
@@ -66,7 +67,7 @@ information in the `TaskRun` changes.
 configuration involved to add the required `volumeMount`. This allows for a
 long-running process in a `Sidecar` to share data with the executing `Steps` of a `Task`.
 
-**Note**: If the `enable-api-fields` feature-flag is set to `"alpha"` then workspaces
+**Note**: If the `enable-api-fields` feature-flag is set to `"beta"` then workspaces
 will automatically be available to `Sidecars` too!
 
 ### `Workspaces` in `Pipelines` and `PipelineRuns`
@@ -100,7 +101,7 @@ the `optional` field.
 
 ### Isolated `Workspaces`
 
-This is an alpha feature. The `enable-api-fields` feature flag [must be set to `"alpha"`](./install.md)
+This is a beta feature. The `enable-api-fields` feature flag [must be set to `"beta"`](./install.md)
 for Isolated Workspaces to function.
 
 Certain kinds of data are more sensitive than others. To reduce exposure of sensitive data Task
@@ -186,8 +187,8 @@ spec:
         touch "$(workspaces.signals.path)/ready"
 ```
 
-**Note:** Starting in Pipelines v0.24.0 `Sidecars` automatically get access to `Workspaces`.This is an
-alpha feature and requires Pipelines to have [the "alpha" feature gate enabled](./install.md#alpha-features).
+**Note:** Starting in Pipelines v0.24.0 `Sidecars` automatically get access to `Workspaces`. This is a
+beta feature and requires Pipelines to have [the "beta" feature gate enabled](./install.md#beta-features).
 
 If a Sidecar already has a `volumeMount` at the location expected for a `workspace` then that `workspace` is
 not bound to the Sidecar. This preserves backwards-compatibility with any existing uses of the `volumeMount`
@@ -195,7 +196,7 @@ trick described above.
 
 #### Isolating `Workspaces` to Specific `Steps` or `Sidecars`
 
-This is an alpha feature. The `enable-api-fields` feature flag [must be set to `"alpha"`](./install.md)
+This is a beta feature. The `enable-api-fields` feature flag [must be set to `"beta"`](./install.md#beta-features)
 for Isolated Workspaces to function.
 
 To limit access to a `Workspace` from a subset of a `Task's` `Steps` or `Sidecars` requires
@@ -254,7 +255,7 @@ a `Task` requires but which are not provided by the `TaskRun` will be bound with
 
 The configuration for the default `Workspace Binding` is added to the `config-defaults` `ConfigMap`, under
 the `default-task-run-workspace-binding` key. For an example, see the [Customizing basic execution
-parameters](./install.md#customizing-basic-execution-parameters) section of the install doc.
+parameters](./additional-configs.md#customizing-basic-execution-parameters) section of the install doc.
 
 **Note:** the default configuration is used for any _required_ `Workspace` declared by a `Task`. Optional
 `Workspaces` are not populated with the default binding. This is because a `Task's` behaviour will typically
@@ -310,7 +311,7 @@ spec:
                         # but consider using a PersistentVolumeClaim for PipelineRuns
 ```
 For examples of using other types of volume sources, see [Specifying `VolumeSources` in `Workspaces`](#specifying-volumesources-in-workspaces).
-For a more in-depth example, see [`Workspaces` in a `TaskRun`](../examples/v1beta1/taskruns/workspace.yaml).
+For a more in-depth example, see [`Workspaces` in a `TaskRun`](../examples/v1/taskruns/workspace.yaml).
 
 ### Using `Workspaces` in `Pipelines`
 
@@ -352,7 +353,7 @@ spec:
         - use-ws-from-pipeline # important: use-ws-from-pipeline writes to the workspace first
 ```
 
-Include a `subPath` in the `Workspace Binding` to mount different parts of the same volume for different Tasks. See [a full example of this kind of Pipeline](../examples/v1beta1/pipelineruns/pipelinerun-using-different-subpaths-of-workspace.yaml) which writes data to two adjacent directories on the same Volume.
+Include a `subPath` in the `Workspace Binding` to mount different parts of the same volume for different Tasks. See [a full example of this kind of Pipeline](../examples/v1/pipelineruns/pipelinerun-using-different-subpaths-of-workspace.yaml) which writes data to two adjacent directories on the same Volume.
 
 The `subPath` specified in a `Pipeline` will be appended to any `subPath` specified as part of the `PipelineRun` workspace declaration. So a `PipelineRun` declaring a `Workspace` with `subPath` of `/foo` for a `Pipeline` who binds it to a `Task` with `subPath` of `/bar` will end up mounting the `Volume`'s `/foo/bar` directory.
 
@@ -363,22 +364,10 @@ write to or read from that `Workspace`. Use the `runAfter` field in your `Pipeli
 to define when a `Task` should be executed. For more information, see the [`runAfter` documentation](pipelines.md#using-the-runafter-parameter).
 
 When a `PersistentVolumeClaim` is used as volume source for a `Workspace` in a `PipelineRun`,
-an Affinity Assistant will be created. The Affinity Assistant acts as a placeholder for `TaskRun` pods
-sharing the same `Workspace`. All `TaskRun` pods within the `PipelineRun` that share the `Workspace`
-will be scheduled to the same Node as the Affinity Assistant pod. This means that Affinity Assistant is incompatible
-with e.g. other affinity rules configured for the `TaskRun` pods. If the `PipelineRun` has a custom
-[PodTemplate](pipelineruns.md#specifying-a-pod-template) configured, the `NodeSelector` and `Tolerations` fields
-will also be set on the Affinity Assistant pod. The Affinity Assistant
-is deleted when the `PipelineRun` is completed. The Affinity Assistant can be disabled by setting the
-[disable-affinity-assistant](install.md#customizing-basic-execution-parameters) feature gate to `true`.
+an Affinity Assistant will be created. For more information, see the [`Affinity Assistants` documentation](affinityassistants.md).
 
-**Note:** Affinity Assistant use [Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
-that require substantial amount of processing which can slow down scheduling in large clusters
-significantly. We do not recommend using them in clusters larger than several hundred nodes
-
-**Note:** Pod anti-affinity requires nodes to be consistently labelled, in other words every
-node in the cluster must have an appropriate label matching `topologyKey`. If some or all nodes
-are missing the specified `topologyKey` label, it can lead to unintended behavior.
+**Note**: When `coschedule` is set to `workspaces` or `disabled`, it is not allowed to bind multiple [`PersistentVolumeClaim` based workspaces](#using-persistentvolumeclaims-as-volumesource) to the same `TaskRun` in a `PipelineRun` due to potential Availability Zone conflicts.
+See more details in [Availability Zones](#availability-zones).
 
 #### Specifying `Workspaces` in `PipelineRuns`
 
@@ -394,6 +383,11 @@ this list must correspond to a `Workspace` declaration in the `Pipeline`. Each e
 The entry must also include one `VolumeSource`. See [Using `VolumeSources` with `Workspaces`](#specifying-volumesources-in-workspaces) for more information.
 
 **Note:** If the `Workspaces` specified by a `Pipeline` are not provided at runtime by a `PipelineRun`, that `PipelineRun` will fail.
+
+You can pass in extra `Workspaces` if needed depending on your use cases. An example use
+case is when your CI system autogenerates `PipelineRuns` and it has `Workspaces` it wants to
+provide to all `PipelineRuns`. Because you can pass in extra `Workspaces`, you don't have to
+go through the complexity of checking each `Pipeline` and providing only the required `Workspaces`.
 
 #### Example `PipelineRun` definition using `Workspaces`
 
@@ -421,7 +415,7 @@ spec:
 ```
 
 For examples of using other types of volume sources, see [Specifying `VolumeSources` in `Workspaces`](#specifying-volumesources-in-workspaces).
-For a more in-depth example, see the [`Workspaces` in `PipelineRun`](../examples/v1beta1/pipelineruns/workspaces.yaml) YAML sample.
+For a more in-depth example, see the [`Workspaces` in `PipelineRun`](../examples/v1/pipelineruns/workspaces.yaml) YAML sample.
 
 ### Specifying `VolumeSources` in `Workspaces`
 
@@ -512,6 +506,61 @@ workspaces:
       secretName: my-secret
 ```
 
+##### `projected`
+
+The `projected` field references a [`projected` volume](https://kubernetes.io/docs/concepts/storage/projected-volumes).
+`projected` volume workspaces are a [beta feature](./additional-configs.md#beta-features).
+Using a `projected` volume has the following limitations:
+
+- `projected` volume sources are always mounted as read-only. `Steps` cannot write to them and will error out if they try.
+- The volumes you want to project as a `Workspace` must exist prior to submitting the `TaskRun`.
+- The following volumes can be projected: `configMap`, `secret`, `serviceAccountToken` and `downwardApi`
+
+```yaml
+workspaces:
+  - name: myworkspace
+    projected:
+      sources:
+        - configMap:
+            name: my-configmap
+        - secret:
+            name: my-secret
+```
+
+##### `csi`
+
+The `csi` field references a [`csi` volume](https://kubernetes.io/docs/concepts/storage/volumes/#csi).
+`csi` workspaces are a [beta feature](./additional-configs.md#beta-features).
+Using a `csi` volume has the following limitations:
+<!-- wokeignore:rule=master --> 
+- `csi` volume sources require a volume driver to use, which must correspond to the value by the CSI driver as defined in the [CSI spec](https://github.com/container-storage-interface/spec/blob/master/spec.md#getplugininfo).
+
+```yaml
+workspaces:
+  - name: my-credentials
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: "vault-database"
+```
+
+Example of CSI workspace using Hashicorp Vault:
+
+- Install the required csi driver. eg. [secrets-store-csi-driver](https://github.com/hashicorp/vault-csi-provider#using-yaml)
+- Install the `vault` Provider onto the kubernetes cluster. [Reference](https://learn.hashicorp.com/tutorials/vault/kubernetes-raft-deployment-guide)
+- Deploy a provider via [example](https://gist.github.com/JeromeJu/cc8e4e758029b6694806604750b8911c)
+- Create a SecretProviderClass Provider using the following [yaml](https://github.com/tektoncd/pipeline/blob/main/examples/v1/pipelineruns/no-ci/csi-workspace.yaml#L1-L19)
+- Specify the ServiceAccount via vault:
+
+```
+vault write auth/kubernetes/role/database \
+bound_service_account_names=default \
+bound_service_account_namespaces=default \
+policies=internal-app \
+ttl=20m
+```
+
 If you need support for a `VolumeSource` type not listed above, [open an issue](https://github.com/tektoncd/pipeline/issues) or
 a [pull request](https://github.com/tektoncd/pipeline/blob/main/CONTRIBUTING.md).
 
@@ -531,13 +580,6 @@ only available to Nodes within *one* Availability Zone. There is usually an opti
 but they have trade-offs, e.g. you need to pay for multiple volumes since they are replicated and your volume may have 
 substantially higher latency.
 
-When using a workspace backed by a `PersistentVolumeClaim` (typically only available within a Data Center) and the `TaskRun`
-pods can be scheduled to any Availability Zone in a regional cluster, some techniques must be used to avoid deadlock in the `Pipeline`.
-
-Tekton provides an Affinity Assistant that schedules all `TaskRun` Pods sharing a `PersistentVolumeClaim` to the same
-Node. This avoids deadlocks that can happen when two Pods requiring the same Volume are scheduled to different Availability Zones.
-A volume typically only lives within a single Availability Zone.
-
 ### Access Modes
 
 A `PersistentVolumeClaim` specifies an [Access Mode](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes).
@@ -555,10 +597,17 @@ the storage solution that you are using.
 * `ReadWriteMany` is the least commonly available Access Mode. If you use this access mode and these volumes are available
   to all Nodes within your cluster, you may want to disable the Affinity Assistant.
 
+### Availability Zones
+`Persistent Volumes` are "zonal" in some cloud providers like GKE (i.e. they live within a single Availability Zone and cannot be accessed from a `pod` living in another Availability Zone). When using a workspace backed by a `PersistentVolumeClaim` (typically only available within a Data Center), the `TaskRun` `pods` can be scheduled to any Availability Zone in a regional cluster. This results in potential Availability Zone scheduling conflict when two `pods` requiring the same Volume are scheduled to different Availability Zones (see issue [#3480](https://github.com/tektoncd/pipeline/issues/3480) and [#5275](https://github.com/tektoncd/pipeline/issues/5275)).
+
+To avoid such conflict in `PipelineRuns`, Tekton provides [Affinity Assistants](affinityassistants.md) which schedule all `TaskRun` `pods` or all `TaskRun` sharing a `PersistentVolumeClaim` in a `PipelineRun` to the same Node depending on the `coschedule` mode.
+
+Specifically, for users use zonal clusters like GKE or use `PersistentVolumeClaim` in ReadWriteOnce access modes, please set `coschedule: workspaces` to schedule each of the `TaskRun` `pod` to the same zone as the associated `PersistentVolumeClaim`. In addition, for users want to bind multiple `PersistentVolumeClaims` to a single `TaskRun`, please set `coschedule: pipelineruns` to schedule all `TaskRun` `pods` and `PersistentVolumeClaim` in a `PipelineRun` to the same zone.
+
 ## More examples
 
 See the following in-depth examples of configuring `Workspaces`:
 
-- [`Workspaces` in a `TaskRun`](../examples/v1beta1/taskruns/workspace.yaml)
-- [`Workspaces` in a `PipelineRun`](../examples/v1beta1/pipelineruns/workspaces.yaml)
-- [`Workspaces` from a volumeClaimTemplate in a `PipelineRun`](../examples/v1beta1/pipelineruns/workspace-from-volumeclaimtemplate.yaml)
+- [`Workspaces` in a `TaskRun`](../examples/v1/taskruns/workspace.yaml)
+- [`Workspaces` in a `PipelineRun`](../examples/v1/pipelineruns/workspaces.yaml)
+- [`Workspaces` from a volumeClaimTemplate in a `PipelineRun`](../examples/v1/pipelineruns/workspace-from-volumeclaimtemplate.yaml)

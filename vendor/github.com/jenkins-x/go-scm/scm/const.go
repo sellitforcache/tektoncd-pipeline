@@ -73,7 +73,7 @@ func ToState(s string) State {
 
 // MarshalJSON marshals State to JSON
 func (s State) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf(`"%s"`, s.String())), nil
+	return []byte(fmt.Sprintf(`%q`, s.String())), nil
 }
 
 // UnmarshalJSON unmarshals JSON to State
@@ -105,12 +105,10 @@ const (
 	ActionReviewRequestRemoved
 	ActionReadyForReview
 	ActionConvertedToDraft
-
 	// reviews
 	ActionEdited
 	ActionSubmitted
 	ActionDismissed
-
 	// check run / check suite
 	ActionCompleted
 )
@@ -143,7 +141,7 @@ func (a Action) String() (s string) {
 	case ActionSubmitted:
 		return "submitted"
 	case ActionDismissed:
-		return "dismisssed"
+		return "dismissed"
 	case ActionAssigned:
 		return "assigned"
 	case ActionUnassigned:
@@ -159,7 +157,7 @@ func (a Action) String() (s string) {
 	case ActionCompleted:
 		return "completed"
 	default:
-		return
+		return ""
 	}
 }
 
@@ -207,6 +205,14 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 		*a = ActionDismissed
 	case "edited":
 		*a = ActionEdited
+	case "assigned":
+		*a = ActionAssigned
+	case "unassigned":
+		*a = ActionUnassigned
+	case "review_requested":
+		*a = ActionReviewRequested
+	case "review_request_removed":
+		*a = ActionReviewRequestRemoved
 	}
 	return nil
 }
@@ -225,6 +231,7 @@ const (
 	DriverStash
 	DriverCoding
 	DriverFake
+	DriverAzure
 )
 
 // String returns the string representation of Driver.
@@ -246,6 +253,8 @@ func (d Driver) String() (s string) {
 		return "coding"
 	case DriverFake:
 		return "fake"
+	case DriverAzure:
+		return "azure"
 	default:
 		return "unknown"
 	}

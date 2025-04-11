@@ -25,7 +25,6 @@ import (
 	"testing"
 
 	"github.com/tektoncd/pipeline/test/parse"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
@@ -115,7 +114,7 @@ func TestPipelineRunWithServiceAccounts(t *testing.T) {
 	}
 
 	// Create a Pipeline with multiple tasks
-	pipeline := parse.MustParsePipeline(t, fmt.Sprintf(`
+	pipeline := parse.MustParseV1Pipeline(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -124,52 +123,52 @@ spec:
   - name: task1
     taskSpec:
       steps:
-      - image: ubuntu
+      - image: mirror.gcr.io/ubuntu
         script: echo task1
   - name: task2
     taskSpec:
       steps:
-      - image: ubuntu
+      - image: mirror.gcr.io/ubuntu
         script: echo task2
   - name: task3
     taskSpec:
       steps:
-      - image: ubuntu
+      - image: mirror.gcr.io/ubuntu
         script: echo task3
 `, helpers.ObjectNameForTest(t), namespace))
-	if _, err := c.PipelineClient.Create(ctx, pipeline, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1PipelineClient.Create(ctx, pipeline, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Pipeline `%s`: %s", pipeline.Name, err)
 	}
 
 	// Create a PipelineRun that uses those ServiceAccount
-	pipelineRun := parse.MustParsePipelineRun(t, fmt.Sprintf(`
+	pipelineRun := parse.MustParseV1PipelineRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   pipelineRef:
     name: %s
-  serviceAccountName: sa1
-  serviceAccountNames:
-  - serviceAccountName: sa2
-    taskName: task2
+  taskRunTemplate:
+    serviceAccountName: sa1
   taskRunSpecs:
+  - pipelineTaskName: task2
+    serviceAccountName: sa2
   - pipelineTaskName: task3
-    taskServiceAccountName: sa3
+    serviceAccountName: sa3
 `, helpers.ObjectNameForTest(t), namespace, pipeline.Name))
 
-	_, err := c.PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{})
+	_, err := c.V1PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatalf("Failed to create PipelineRun `%s`: %s", pipelineRun.Name, err)
 	}
 
 	t.Logf("Waiting for PipelineRun %s in namespace %s to complete", pipelineRun.Name, namespace)
-	if err := WaitForPipelineRunState(ctx, c, pipelineRun.Name, timeout, PipelineRunSucceed(pipelineRun.Name), "PipelineRunSuccess"); err != nil {
+	if err := WaitForPipelineRunState(ctx, c, pipelineRun.Name, timeout, PipelineRunSucceed(pipelineRun.Name), "PipelineRunSuccess", v1Version); err != nil {
 		t.Fatalf("Error waiting for PipelineRun %s to finish: %s", pipelineRun.Name, err)
 	}
 
 	// Verify it used those serviceAccount
-	taskRuns, err := c.TaskRunClient.List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("tekton.dev/pipelineRun=%s", pipelineRun.Name)})
+	taskRuns, err := c.V1TaskRunClient.List(ctx, metav1.ListOptions{LabelSelector: "tekton.dev/pipelineRun=" + pipelineRun.Name})
 	if err != nil {
 		t.Fatalf("Error listing TaskRuns for PipelineRun %s: %s", pipelineRun.Name, err)
 	}
@@ -180,7 +179,7 @@ spec:
 		if sa != expectedSA {
 			t.Fatalf("TaskRun %s expected SA %s, got %s", taskRun.Name, expectedSA, sa)
 		}
-		pods, err := c.KubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("tekton.dev/taskRun=%s", taskRun.Name)})
+		pods, err := c.KubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "tekton.dev/taskRun=" + taskRun.Name})
 		if err != nil {
 			t.Fatalf("Error listing Pods for TaskRun %s: %s", taskRun.Name, err)
 		}
@@ -233,7 +232,7 @@ func TestPipelineRunWithServiceAccountNameAndTaskRunSpec(t *testing.T) {
 	}
 
 	// Create a Pipeline with multiple tasks
-	pipeline := parse.MustParsePipeline(t, fmt.Sprintf(`
+	pipeline := parse.MustParseV1Pipeline(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -243,40 +242,41 @@ spec:
     taskSpec:
       metadata: {}
       steps:
-      - image: ubuntu
+      - image: mirror.gcr.io/ubuntu
         script: echo task1
 `, helpers.ObjectNameForTest(t), namespace))
-	if _, err := c.PipelineClient.Create(ctx, pipeline, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1PipelineClient.Create(ctx, pipeline, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Pipeline `%s`: %s", pipeline.Name, err)
 	}
 
 	dnsPolicy := corev1.DNSClusterFirst
 	// Create a PipelineRun that uses those ServiceAccount
-	pipelineRun := parse.MustParsePipelineRun(t, fmt.Sprintf(`
+	pipelineRun := parse.MustParseV1PipelineRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   pipelineRef:
     name: %s
-  serviceAccountName: sa1
+  taskRunTemplate:
+    serviceAccountName: sa1
   taskRunSpecs:
   - pipelineTaskName: task1
     taskPodTemplate:
       dnsPolicy: %s
 `, helpers.ObjectNameForTest(t), namespace, pipeline.Name, dnsPolicy))
 
-	if _, err := c.PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create PipelineRun `%s`: %s", pipelineRun.Name, err)
 	}
 
 	t.Logf("Waiting for PipelineRun %s in namespace %s to complete", pipelineRun.Name, namespace)
-	if err := WaitForPipelineRunState(ctx, c, pipelineRun.Name, timeout, PipelineRunSucceed(pipelineRun.Name), "PipelineRunSuccess"); err != nil {
+	if err := WaitForPipelineRunState(ctx, c, pipelineRun.Name, timeout, PipelineRunSucceed(pipelineRun.Name), "PipelineRunSuccess", v1Version); err != nil {
 		t.Fatalf("Error waiting for PipelineRun %s to finish: %s", pipelineRun.Name, err)
 	}
 
 	// Verify it used those serviceAccount
-	taskRuns, err := c.TaskRunClient.List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("tekton.dev/pipelineRun=%s", pipelineRun.Name)})
+	taskRuns, err := c.V1TaskRunClient.List(ctx, metav1.ListOptions{LabelSelector: "tekton.dev/pipelineRun=" + pipelineRun.Name})
 	if err != nil {
 		t.Fatalf("Error listing TaskRuns for PipelineRun %s: %s", pipelineRun.Name, err)
 	}
@@ -286,7 +286,7 @@ spec:
 		if sa != expectedSA {
 			t.Fatalf("TaskRun %s expected SA %s, got %s", taskRun.Name, expectedSA, sa)
 		}
-		pods, err := c.KubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("tekton.dev/taskRun=%s", taskRun.Name)})
+		pods, err := c.KubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "tekton.dev/taskRun=" + taskRun.Name})
 		if err != nil {
 			t.Fatalf("Error listing Pods for TaskRun %s: %s", taskRun.Name, err)
 		}

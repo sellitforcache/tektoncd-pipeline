@@ -26,7 +26,6 @@ import (
 	"testing"
 
 	"github.com/tektoncd/pipeline/test/parse"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
@@ -46,22 +45,22 @@ func TestWorkingDirCreated(t *testing.T) {
 	wdTaskName := helpers.ObjectNameForTest(t)
 	wdTaskRunName := helpers.ObjectNameForTest(t)
 
-	task := parse.MustParseTask(t, fmt.Sprintf(`
+	task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   steps:
-  - image: ubuntu
+  - image: mirror.gcr.io/ubuntu
     workingDir: /workspace/HELLOMOTO
     args: ['-c', 'echo YES']
 `, wdTaskName, namespace))
-	if _, err := c.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task: %s", err)
 	}
 
 	t.Logf("Creating TaskRun  namespace %s", namespace)
-	taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+	taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -70,16 +69,16 @@ spec:
     name: %s
   serviceAccountName: default
 `, wdTaskRunName, namespace, wdTaskName))
-	if _, err := c.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to finish successfully", namespace)
-	if err := WaitForTaskRunState(ctx, c, wdTaskRunName, TaskRunSucceed(wdTaskRunName), "TaskRunSuccess"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, wdTaskRunName, TaskRunSucceed(wdTaskRunName), "TaskRunSuccess", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish successfully: %s", err)
 	}
 
-	tr, err := c.TaskRunClient.Get(ctx, wdTaskRunName, metav1.GetOptions{})
+	tr, err := c.V1TaskRunClient.Get(ctx, wdTaskRunName, metav1.GetOptions{})
 	if err != nil {
 		t.Errorf("Error retrieving taskrun: %s", err)
 	}
@@ -119,22 +118,22 @@ func TestWorkingDirIgnoredNonSlashWorkspace(t *testing.T) {
 	wdTaskName := helpers.ObjectNameForTest(t)
 	wdTaskRunName := helpers.ObjectNameForTest(t)
 
-	task := parse.MustParseTask(t, fmt.Sprintf(`
+	task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   steps:
-  - image: ubuntu
+  - image: mirror.gcr.io/ubuntu
     workingDir: /HELLOMOTO
     args: ['-c', 'echo YES']
 `, wdTaskName, namespace))
-	if _, err := c.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task: %s", err)
 	}
 
 	t.Logf("Creating TaskRun  namespace %s", namespace)
-	taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+	taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -143,16 +142,16 @@ spec:
     name: %s
   serviceAccountName: default
 `, wdTaskRunName, namespace, wdTaskName))
-	if _, err := c.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to finish successfully", namespace)
-	if err := WaitForTaskRunState(ctx, c, wdTaskRunName, TaskRunSucceed(wdTaskRunName), "TaskRunSuccess"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, wdTaskRunName, TaskRunSucceed(wdTaskRunName), "TaskRunSuccess", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish successfully: %s", err)
 	}
 
-	tr, err := c.TaskRunClient.Get(ctx, wdTaskRunName, metav1.GetOptions{})
+	tr, err := c.V1TaskRunClient.Get(ctx, wdTaskRunName, metav1.GetOptions{})
 	if err != nil {
 		t.Errorf("Error retrieving taskrun: %s", err)
 	}
@@ -166,5 +165,4 @@ spec:
 			t.Logf("Found a working dir container called `%s` in `%s`  when it should have been excluded:", stat.Name, tr.Status.PodName)
 		}
 	}
-
 }

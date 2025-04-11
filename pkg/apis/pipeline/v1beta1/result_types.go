@@ -13,6 +13,8 @@ limitations under the License.
 
 package v1beta1
 
+import "strings"
+
 // TaskResult used to describe the results of a task
 type TaskResult struct {
 	// Name the given name
@@ -23,9 +25,19 @@ type TaskResult struct {
 	// +optional
 	Type ResultsType `json:"type,omitempty"`
 
+	// Properties is the JSON Schema properties to support key-value pairs results.
+	// +optional
+	Properties map[string]PropertySpec `json:"properties,omitempty"`
+
 	// Description is a human-readable description of the result
 	// +optional
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
+
+	// Value the expression used to retrieve the value of the result from an underlying Step.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Value *ResultValue `json:"value,omitempty"`
 }
 
 // TaskRunResult used to describe the results of a task
@@ -39,22 +51,35 @@ type TaskRunResult struct {
 	Type ResultsType `json:"type,omitempty"`
 
 	// Value the given value of the result
-	Value string `json:"value"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Value ResultValue `json:"value"`
 }
+
+// TaskRunStepResult is a type alias of TaskRunResult
+type TaskRunStepResult = TaskRunResult
+
+// ResultValue is a type alias of ParamValue
+type ResultValue = ParamValue
 
 // ResultsType indicates the type of a result;
 // Used to distinguish between a single string and an array of strings.
 // Note that there is ResultType used to find out whether a
-// PipelineResourceResult is from a task result or not, which is different from
+// RunResult is from a task result or not, which is different from
 // this ResultsType.
-// TODO(#4723): add "array" and "object" support
-// TODO(#4723): align ResultsType and ParamType in ArrayOrString
 type ResultsType string
 
 // Valid ResultsType:
 const (
 	ResultsTypeString ResultsType = "string"
+	ResultsTypeArray  ResultsType = "array"
+	ResultsTypeObject ResultsType = "object"
 )
 
 // AllResultsTypes can be used for ResultsTypes validation.
-var AllResultsTypes = []ResultsType{ResultsTypeString}
+var AllResultsTypes = []ResultsType{ResultsTypeString, ResultsTypeArray, ResultsTypeObject}
+
+// ResultsArrayReference returns the reference of the result. e.g. results.resultname from $(results.resultname[*])
+func ResultsArrayReference(a string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(a, "$("), ")"), "[*]")
+}

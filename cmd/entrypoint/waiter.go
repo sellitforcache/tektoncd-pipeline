@@ -1,6 +1,24 @@
+/*
+Copyright 2023 The Tekton Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -31,11 +49,11 @@ func (rw *realWaiter) setWaitPollingInterval(pollingInterval time.Duration) *rea
 //
 // If a file of the same name with a ".err" extension exists then this Wait
 // will end with a skipError.
-func (rw *realWaiter) Wait(file string, expectContent bool, breakpointOnFailure bool) error {
+func (rw *realWaiter) Wait(ctx context.Context, file string, expectContent bool, breakpointOnFailure bool) error {
 	if file == "" {
 		return nil
 	}
-	for ; ; time.Sleep(rw.waitPollingInterval) {
+	for {
 		if info, err := os.Stat(file); err == nil {
 			if !expectContent || info.Size() > 0 {
 				return nil
@@ -53,13 +71,18 @@ func (rw *realWaiter) Wait(file string, expectContent bool, breakpointOnFailure 
 			if breakpointOnFailure {
 				return nil
 			}
-			return skipError("error file present, bail and skip the step")
+			return entrypoint.ErrSkipPreviousStepFailed
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return entrypoint.ErrContextCanceled
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return entrypoint.ErrContextDeadlineExceeded
+			}
+			return nil
+		case <-time.After(rw.waitPollingInterval):
 		}
 	}
-}
-
-type skipError string
-
-func (e skipError) Error() string {
-	return string(e)
 }

@@ -24,9 +24,8 @@ import (
 	"fmt"
 	"testing"
 
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 	"github.com/tektoncd/pipeline/test/parse"
-
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -44,7 +43,7 @@ func TestHermeticTaskRun(t *testing.T) {
 
 	tests := []struct {
 		desc       string
-		getTaskRun func(*testing.T, string, string, string) *v1beta1.TaskRun
+		getTaskRun func(*testing.T, string, string, string) *v1.TaskRun
 	}{
 		{
 			desc:       "run-as-root",
@@ -58,33 +57,34 @@ func TestHermeticTaskRun(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
 			// first, run the task run with hermetic=false to prove that it succeeds
-			regularTaskRunName := fmt.Sprintf("not-hermetic-%s", test.desc)
+			regularTaskRunName := "not-hermetic-" + test.desc
 			regularTaskRun := test.getTaskRun(t, regularTaskRunName, namespace, "")
 			t.Logf("Creating TaskRun %s, hermetic=false", regularTaskRunName)
-			if _, err := c.TaskRunClient.Create(ctx, regularTaskRun, metav1.CreateOptions{}); err != nil {
+			if _, err := c.V1TaskRunClient.Create(ctx, regularTaskRun, metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Failed to create TaskRun `%s`: %s", regularTaskRunName, err)
 			}
-			if err := WaitForTaskRunState(ctx, c, regularTaskRunName, Succeed(regularTaskRunName), "TaskRunCompleted"); err != nil {
+			if err := WaitForTaskRunState(ctx, c, regularTaskRunName, Succeed(regularTaskRunName), "TaskRunCompleted", v1Version); err != nil {
 				t.Errorf("Error waiting for TaskRun %s to finish: %s", regularTaskRunName, err)
 			}
 
 			// now, run the task mode with hermetic mode
 			// it should fail, since it shouldn't be able to access any network
-			hermeticTaskRunName := fmt.Sprintf("hermetic-should-fail-%s", test.desc)
+			hermeticTaskRunName := "hermetic-should-fail-" + test.desc
 			hermeticTaskRun := test.getTaskRun(t, hermeticTaskRunName, namespace, "hermetic")
 			t.Logf("Creating TaskRun %s, hermetic=true", hermeticTaskRunName)
-			if _, err := c.TaskRunClient.Create(ctx, hermeticTaskRun, metav1.CreateOptions{}); err != nil {
+			if _, err := c.V1TaskRunClient.Create(ctx, hermeticTaskRun, metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Failed to create TaskRun `%s`: %s", regularTaskRun.Name, err)
 			}
-			if err := WaitForTaskRunState(ctx, c, hermeticTaskRunName, Failed(hermeticTaskRunName), "Failed"); err != nil {
+			if err := WaitForTaskRunState(ctx, c, hermeticTaskRunName, Failed(hermeticTaskRunName), "Failed", v1Version); err != nil {
 				t.Errorf("Error waiting for TaskRun %s to fail: %s", hermeticTaskRunName, err)
 			}
 		})
 	}
 }
 
-func taskRun(t *testing.T, name, namespace, executionMode string) *v1beta1.TaskRun {
-	return parse.MustParseTaskRun(t, fmt.Sprintf(`
+func taskRun(t *testing.T, name, namespace, executionMode string) *v1.TaskRun {
+	t.Helper()
+	return parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   annotations:
     experimental.tekton.dev/execution-mode: %s
@@ -95,7 +95,7 @@ spec:
     steps:
     - image: gcr.io/cloud-builders/curl
       name: access-network
-      resources: {}
+      
       script: |-
         #!/bin/bash
         set -ex
@@ -106,8 +106,9 @@ spec:
 `, executionMode, name, namespace))
 }
 
-func unpriviligedTaskRun(t *testing.T, name, namespace, executionMode string) *v1beta1.TaskRun {
-	return parse.MustParseTaskRun(t, fmt.Sprintf(`
+func unpriviligedTaskRun(t *testing.T, name, namespace, executionMode string) *v1.TaskRun {
+	t.Helper()
+	return parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   annotations:
     experimental.tekton.dev/execution-mode: %s
@@ -118,7 +119,7 @@ spec:
     steps:
     - image: gcr.io/cloud-builders/curl
       name: curl
-      resources: {}
+      
       script: |-
         #!/bin/bash
         set -ex

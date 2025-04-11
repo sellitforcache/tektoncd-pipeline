@@ -39,7 +39,7 @@ func (s *contentService) Find(ctx context.Context, repo, path, ref string) (*scm
 	}, res, err
 }
 
-func (s *contentService) List(ctx context.Context, repo, path, ref string) ([]*scm.FileEntry, *scm.Response, error) {
+func (s *contentService) List(ctx context.Context, repo, path, ref string, opts *scm.ListOptions) ([]*scm.FileEntry, *scm.Response, error) {
 	endpoint := fmt.Sprintf("api/v4/projects/%s/repository/tree?path=%s&ref=%s", encode(repo), path, ref)
 	out := []*entry{}
 	res, err := s.client.do(ctx, "GET", endpoint, nil, &out)
@@ -73,7 +73,7 @@ func (s *contentService) Update(ctx context.Context, repo, path string, params *
 	return s.client.do(ctx, "PUT", endpoint, &body, nil)
 }
 
-func (s *contentService) Delete(ctx context.Context, repo, path, ref string) (*scm.Response, error) {
+func (s *contentService) Delete(ctx context.Context, repo, path string, params *scm.ContentParams) (*scm.Response, error) {
 	return nil, scm.ErrNotSupported
 }
 

@@ -29,9 +29,12 @@ import (
 func TestWorkingDirInit(t *testing.T) {
 	names.TestingSeed()
 	for _, c := range []struct {
-		desc           string
-		stepContainers []corev1.Container
-		want           *corev1.Container
+		desc                           string
+		stepContainers                 []corev1.Container
+		windows                        bool
+		setSecurityContext             bool
+		setSecurityContextReadOnlyRoot bool
+		want                           *corev1.Container
 	}{{
 		desc: "no workingDirs",
 		stepContainers: []corev1.Container{{
@@ -63,9 +66,96 @@ func TestWorkingDirInit(t *testing.T) {
 			WorkingDir:   pipeline.WorkspaceDir,
 			VolumeMounts: implicitVolumeMounts,
 		},
+	}, {
+		desc: "workingDirs are unique and sorted, absolute dirs are ignored, + securitycontext",
+		stepContainers: []corev1.Container{{
+			WorkingDir: "zzz",
+		}, {
+			WorkingDir: "aaa",
+		}, {
+			WorkingDir: "/ignored",
+		}, {
+			WorkingDir: "/workspace", // ignored
+		}, {
+			WorkingDir: "zzz",
+		}, {
+			// Even though it's specified absolute, it's relative
+			// to /workspace, so we need to create it.
+			WorkingDir: "/workspace/bbb",
+		}},
+		setSecurityContext:             true,
+		setSecurityContextReadOnlyRoot: true,
+		want: &corev1.Container{
+			Name:            "working-dir-initializer",
+			Image:           images.WorkingDirInitImage,
+			Command:         []string{"/ko-app/workingdirinit"},
+			Args:            []string{"/workspace/bbb", "aaa", "zzz"},
+			WorkingDir:      pipeline.WorkspaceDir,
+			VolumeMounts:    implicitVolumeMounts,
+			SecurityContext: SecurityContextConfig{SetSecurityContext: true, SetReadOnlyRootFilesystem: true}.GetSecurityContext(false),
+		},
+	}, {
+		desc: "workingDirs are unique and sorted, absolute dirs are ignored, uses windows",
+		stepContainers: []corev1.Container{{
+			WorkingDir: "zzz",
+		}, {
+			WorkingDir: "aaa",
+		}, {
+			WorkingDir: "/ignored",
+		}, {
+			WorkingDir: "/workspace", // ignored
+		}, {
+			WorkingDir: "zzz",
+		}, {
+			// Even though it's specified absolute, it's relative
+			// to /workspace, so we need to create it.
+			WorkingDir: "/workspace/bbb",
+		}},
+		windows: true,
+		want: &corev1.Container{
+			Name:         "working-dir-initializer",
+			Image:        images.WorkingDirInitImage,
+			Command:      []string{"/ko-app/workingdirinit"},
+			Args:         []string{"/workspace/bbb", "aaa", "zzz"},
+			WorkingDir:   pipeline.WorkspaceDir,
+			VolumeMounts: implicitVolumeMounts,
+		},
+	}, {
+		desc: "workingDirs are unique and sorted, absolute dirs are ignored, uses windows, + securityContext",
+		stepContainers: []corev1.Container{{
+			WorkingDir: "zzz",
+		}, {
+			WorkingDir: "aaa",
+		}, {
+			WorkingDir: "/ignored",
+		}, {
+			WorkingDir: "/workspace", // ignored
+		}, {
+			WorkingDir: "zzz",
+		}, {
+			// Even though it's specified absolute, it's relative
+			// to /workspace, so we need to create it.
+			WorkingDir: "/workspace/bbb",
+		}},
+		windows:                        true,
+		setSecurityContext:             true,
+		setSecurityContextReadOnlyRoot: true,
+		want: &corev1.Container{
+			Name:            "working-dir-initializer",
+			Image:           images.WorkingDirInitImage,
+			Command:         []string{"/ko-app/workingdirinit"},
+			Args:            []string{"/workspace/bbb", "aaa", "zzz"},
+			WorkingDir:      pipeline.WorkspaceDir,
+			VolumeMounts:    implicitVolumeMounts,
+			SecurityContext: WindowsSecurityContext,
+		},
 	}} {
 		t.Run(c.desc, func(t *testing.T) {
-			got := workingDirInit(images.WorkingDirInitImage, c.stepContainers)
+			securityContextConfig := SecurityContextConfig{
+				SetSecurityContext:        c.setSecurityContext,
+				SetReadOnlyRootFilesystem: c.setSecurityContextReadOnlyRoot,
+			}
+			got := workingDirInit(images.WorkingDirInitImage, c.stepContainers, securityContextConfig, c.windows)
 			if d := cmp.Diff(c.want, got); d != "" {
 				t.Fatalf("Diff %s", diff.PrintWantGot(d))
 			}

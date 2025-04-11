@@ -18,34 +18,6 @@ limitations under the License.
 
 package v1alpha1
 
-// ClusterTaskListerExpansion allows custom methods to be added to
-// ClusterTaskLister.
-type ClusterTaskListerExpansion interface{}
-
-// ConditionListerExpansion allows custom methods to be added to
-// ConditionLister.
-type ConditionListerExpansion interface{}
-
-// ConditionNamespaceListerExpansion allows custom methods to be added to
-// ConditionNamespaceLister.
-type ConditionNamespaceListerExpansion interface{}
-
-// PipelineListerExpansion allows custom methods to be added to
-// PipelineLister.
-type PipelineListerExpansion interface{}
-
-// PipelineNamespaceListerExpansion allows custom methods to be added to
-// PipelineNamespaceLister.
-type PipelineNamespaceListerExpansion interface{}
-
-// PipelineRunListerExpansion allows custom methods to be added to
-// PipelineRunLister.
-type PipelineRunListerExpansion interface{}
-
-// PipelineRunNamespaceListerExpansion allows custom methods to be added to
-// PipelineRunNamespaceLister.
-type PipelineRunNamespaceListerExpansion interface{}
-
 // RunListerExpansion allows custom methods to be added to
 // RunLister.
 type RunListerExpansion interface{}
@@ -54,18 +26,18 @@ type RunListerExpansion interface{}
 // RunNamespaceLister.
 type RunNamespaceListerExpansion interface{}
 
-// TaskListerExpansion allows custom methods to be added to
-// TaskLister.
-type TaskListerExpansion interface{}
+// StepActionListerExpansion allows custom methods to be added to
+// StepActionLister.
+type StepActionListerExpansion interface{}
 
-// TaskNamespaceListerExpansion allows custom methods to be added to
-// TaskNamespaceLister.
-type TaskNamespaceListerExpansion interface{}
+// StepActionNamespaceListerExpansion allows custom methods to be added to
+// StepActionNamespaceLister.
+type StepActionNamespaceListerExpansion interface{}
 
-// TaskRunListerExpansion allows custom methods to be added to
-// TaskRunLister.
-type TaskRunListerExpansion interface{}
+// VerificationPolicyListerExpansion allows custom methods to be added to
+// VerificationPolicyLister.
+type VerificationPolicyListerExpansion interface{}
 
-// TaskRunNamespaceListerExpansion allows custom methods to be added to
-// TaskRunNamespaceLister.
-type TaskRunNamespaceListerExpansion interface{}
+// VerificationPolicyNamespaceListerExpansion allows custom methods to be added to
+// VerificationPolicyNamespaceLister.
+type VerificationPolicyNamespaceListerExpansion interface{}

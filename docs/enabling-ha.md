@@ -1,7 +1,7 @@
 <!--
 ---
-linkTitle: "HA Support"
-weight: 1500
+linkTitle: "High Availability Support"
+weight: 106
 ---
 -->
 
@@ -38,7 +38,7 @@ kubectl -n tekton-pipelines scale deployment tekton-pipelines-controller --repli
 
 ### Configuring Leader Election
 
-Leader election can be configured in [config-leader-election.yaml](./../config/config-leader-election.yaml). The ConfigMap defines the following parameters:
+Leader election can be configured in [config-leader-election.yaml](./../config/config-leader-election-controller.yaml). The ConfigMap defines the following parameters:
 
 | Parameter            | Default  |
 | -------------------- | -------- |
@@ -86,7 +86,7 @@ kubectl -n tekton-pipelines scale deployment tekton-pipelines-webhook --replicas
 You can also modify the [HorizontalPodAutoscaler](./../config/webhook-hpa.yaml) to set a minimum number of replicas:
 
 ```yaml
-apiVersion: autoscaling/v2beta1
+apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: tekton-pipelines-webhook
@@ -94,7 +94,7 @@ metadata:
 spec:
   minReplicas: 1
 ```
-
+<!-- wokeignore:rule=master -->
 By default, the Webhook deployment is _not_ configured to block a [Cluster Autoscaler](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler) from scaling down the node that's running the only replica of the deployment using the `cluster-autoscaler.kubernetes.io/safe-to-evict` annotation.
 This means that during node drains, the Webhook might be unavailable temporarily, during which time Tekton resources can't be created, updated or deleted.
 To avoid this, you can add the `safe-to-evict` annotation set to `false` to block node drains during autoscaling, or, better yet, configure multiple replicas of the Webhook deployment.

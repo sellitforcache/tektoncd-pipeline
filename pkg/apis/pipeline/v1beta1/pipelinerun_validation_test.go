@@ -22,14 +22,17 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/tektoncd/pipeline/pkg/apis/config"
+	cfgtesting "github.com/tektoncd/pipeline/pkg/apis/config/testing"
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline/pod"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/test/diff"
 	corev1 "k8s.io/api/core/v1"
 	corev1resources "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/pkg/apis"
-	logtesting "knative.dev/pkg/logging/testing"
+	duckv1 "knative.dev/pkg/apis/duck/v1"
 )
 
 func TestPipelineRun_Invalid(t *testing.T) {
@@ -49,6 +52,27 @@ func TestPipelineRun_Invalid(t *testing.T) {
 			},
 		},
 		want: apis.ErrMissingOneOf("spec.pipelineRef", "spec.pipelineSpec"),
+	}, {
+		name: "PodTemplate contains forbidden environment variable.",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				ServiceAccountName: "foo",
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+				PodTemplate: &pod.Template{
+					Env: []corev1.EnvVar{{
+						Name:  "TEST_ENV",
+						Value: "false",
+					}},
+				},
+			},
+		},
+		want: apis.ErrInvalidValue("PodTemplate cannot update a forbidden env: TEST_ENV", "spec.PodTemplate.Env"),
+		wc:   EnableForbiddenEnv,
 	}, {
 		name: "invalid pipelinerun metadata",
 		pr: v1beta1.PipelineRun{
@@ -94,48 +118,361 @@ func TestPipelineRun_Invalid(t *testing.T) {
 		},
 		want: apis.ErrInvalidValue("PipelineRunCancell should be Cancelled, CancelledRunFinally, StoppedRunFinally or PipelineRunPending", "spec.status"),
 	}, {
-		name: "use of bundle without the feature flag set",
+		name: "propagating params with pipelinespec and taskspec params not provided",
 		pr: v1beta1.PipelineRun{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "pipelinelinename",
 			},
 			Spec: v1beta1.PipelineRunSpec{
-				PipelineRef: &v1beta1.PipelineRef{
-					Name:   "my-pipeline",
-					Bundle: "docker.io/foo",
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.random-words[*])"},
+							}},
+						}},
+					}},
 				},
 			},
 		},
-		want: apis.ErrDisallowedFields("spec.pipelineRef.bundle"),
+		want: &apis.FieldError{
+			Message: `non-existent variable in "$(params.random-words[*])"`,
+			Paths:   []string{"spec.steps[0].args[0]"},
+		},
 	}, {
-		name: "bundle missing name",
+		name: "propagating object params with pipelinespec and taskspec params not provided",
 		pr: v1beta1.PipelineRun{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "pipelinelinename",
 			},
 			Spec: v1beta1.PipelineRunSpec{
-				PipelineRef: &v1beta1.PipelineRef{
-					Bundle: "docker.io/foo",
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ParamValue{
+						Type:      v1beta1.ParamTypeObject,
+						ObjectVal: map[string]string{"hello": "pipeline"},
+					},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words.not-hello)"},
+							}},
+						}},
+					}},
 				},
 			},
 		},
-		want: apis.ErrMissingField("spec.pipelineRef.name"),
-		wc:   enableTektonOCIBundles(t),
+		want: &apis.FieldError{
+			Message: `non-existent variable in "$(params.pipeline-words.not-hello)"`,
+			Paths:   []string{"spec.steps[0].args[0]"},
+		},
 	}, {
-		name: "invalid bundle reference",
+		name: "propagating object params with pipelinespec and taskspec params not provided",
 		pr: v1beta1.PipelineRun{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "pipelinelinename",
 			},
 			Spec: v1beta1.PipelineRunSpec{
-				PipelineRef: &v1beta1.PipelineRef{
-					Name:   "my-pipeline",
-					Bundle: "not a valid reference",
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Params: []v1beta1.ParamSpec{{
+								Name: "pipeline-words",
+								Type: v1beta1.ParamTypeObject,
+								Properties: map[string]v1beta1.PropertySpec{
+									"hello": {Type: v1beta1.ParamTypeString},
+								},
+								Default: &v1beta1.ParamValue{
+									Type:      v1beta1.ParamTypeObject,
+									ObjectVal: map[string]string{"hello": "taskspec"},
+								},
+							}},
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words.not-hello)"},
+							}},
+						}},
+					}},
 				},
 			},
 		},
-		want: apis.ErrInvalidValue("invalid bundle reference", "spec.pipelineRef.bundle", "could not parse reference: not a valid reference"),
-		wc:   enableTektonOCIBundles(t),
+		want: &apis.FieldError{
+			Message: `non-existent variable in "$(params.pipeline-words.not-hello)"`,
+			Paths:   []string{"spec.steps[0].args[0]"},
+		},
+	}, {
+		name: "propagating object params with pipelinespec and taskspec params provided in taskrun",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Params: v1beta1.Params{{
+							Name: "pipeline-words",
+							Value: v1beta1.ParamValue{
+								Type:      v1beta1.ParamTypeObject,
+								ObjectVal: map[string]string{"hello": "pipeline"},
+							},
+						}},
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Params: []v1beta1.ParamSpec{{
+								Name: "pipeline-words",
+								Type: v1beta1.ParamTypeObject,
+								Properties: map[string]v1beta1.PropertySpec{
+									"hello": {Type: v1beta1.ParamTypeString},
+								},
+								Default: &v1beta1.ParamValue{
+									Type:      v1beta1.ParamTypeObject,
+									ObjectVal: map[string]string{"hello": "taskspec"},
+								},
+							}},
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words.not-hello)"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+		want: &apis.FieldError{
+			Message: `non-existent variable in "$(params.pipeline-words.not-hello)"`,
+			Paths:   []string{"spec.steps[0].args[0]"},
+		},
+	}, {
+		name: "propagating params with pipelinespec and taskspec",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ArrayOrString{
+						Type:     v1beta1.ParamTypeArray,
+						ArrayVal: []string{"hello", "pipeline"},
+					},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.random-words[*])"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+		want: &apis.FieldError{
+			Message: `non-existent variable in "$(params.random-words[*])"`,
+			Paths:   []string{"spec.steps[0].args[0]"},
+		},
+	}, {
+		name: "propagating object params with pipelinespec and taskspec",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "objectpipelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ParamValue{
+						Type:      v1beta1.ParamTypeObject,
+						ObjectVal: map[string]string{"hello": "pipeline"},
+					},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Params: []v1beta1.ParamSpec{{
+						Name: "pipeline-words",
+						Type: v1beta1.ParamTypeObject,
+						Properties: map[string]v1beta1.PropertySpec{
+							"hello": {Type: v1beta1.ParamTypeString},
+						},
+						Default: &v1beta1.ParamValue{
+							Type:      v1beta1.ParamTypeObject,
+							ObjectVal: map[string]string{"hello": "pipelinespec"},
+						},
+					}},
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						Params: v1beta1.Params{{
+							Name: "pipeline-words",
+							Value: v1beta1.ParamValue{
+								Type:      v1beta1.ParamTypeObject,
+								ObjectVal: map[string]string{"hello": "task"},
+							},
+						}},
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Params: []v1beta1.ParamSpec{{
+								Name: "pipeline-words",
+								Type: v1beta1.ParamTypeObject,
+								Properties: map[string]v1beta1.PropertySpec{
+									"hello": {Type: v1beta1.ParamTypeString},
+								},
+								Default: &v1beta1.ParamValue{
+									Type:      v1beta1.ParamTypeObject,
+									ObjectVal: map[string]string{"hello": "taskspec"},
+								},
+							}},
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words.not-hello)"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+		want: &apis.FieldError{
+			Message: `non-existent variable in "$(params.pipeline-words.not-hello)"`,
+			Paths:   []string{"spec.steps[0].args[0]"},
+		},
+	}, {
+		name: "duplicate param names",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "some-param",
+					Value: v1beta1.ArrayOrString{
+						ArrayVal: []string{"hello", "pipeline"},
+					},
+				}, {
+					Name: "some-param",
+					Value: v1beta1.ArrayOrString{
+						ArrayVal: []string{"goodbye", "pipeline"},
+					},
+				}},
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+			},
+		},
+		want: &apis.FieldError{
+			Message: "expected exactly one, got both",
+			Paths:   []string{"spec.params[some-param].name"},
+		},
+	}, {
+		name: "task result in string param value",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "some-param",
+					Value: v1beta1.ArrayOrString{
+						StringVal: "$(tasks.some-task.results.foo)",
+						Type:      v1beta1.ParamTypeString,
+					},
+				}},
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+			},
+		},
+		want: &apis.FieldError{
+			Message: "invalid value: cannot use result expressions in [tasks.some-task.results.foo] as PipelineRun parameter values",
+			Paths:   []string{"spec.params[some-param].value"},
+		},
+	}, {
+		name: "task result in array param value",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "some-param",
+					Value: v1beta1.ArrayOrString{
+						ArrayVal: []string{"$(tasks.some-task.results.foo)"},
+						Type:     v1beta1.ParamTypeArray,
+					},
+				}},
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+			},
+		},
+		want: &apis.FieldError{
+			Message: "invalid value: cannot use result expressions in [tasks.some-task.results.foo] as PipelineRun parameter values",
+			Paths:   []string{"spec.params[some-param].value"},
+		},
+	}, {
+		name: "params with pipelinespec and taskspec",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ArrayOrString{
+						Type:     v1beta1.ParamTypeArray,
+						ArrayVal: []string{"hello", "pipeline"},
+					},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Params: []v1beta1.ParamSpec{{
+						Name: "pipeline-words",
+						Type: v1beta1.ParamTypeArray,
+					}},
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						Params: v1beta1.Params{{
+							Name: "pipeline-words",
+							Value: v1beta1.ArrayOrString{
+								Type:     v1beta1.ParamTypeArray,
+								ArrayVal: []string{"$(params.pipeline-words)"},
+							},
+						}},
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Params: []v1beta1.ParamSpec{{
+								Name: "pipeline-words",
+								Type: v1beta1.ParamTypeArray,
+							}},
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.random-words[*])"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+		want: &apis.FieldError{
+			Message: `non-existent variable in "$(params.random-words[*])"`,
+			Paths:   []string{"spec.steps[0].args[0]"},
+		},
 	}, {
 		name: "pipelinerun pending while running",
 		pr: v1beta1.PipelineRun{
@@ -150,7 +487,7 @@ func TestPipelineRun_Invalid(t *testing.T) {
 			},
 			Status: v1beta1.PipelineRunStatus{
 				PipelineRunStatusFields: v1beta1.PipelineRunStatusFields{
-					StartTime: &metav1.Time{time.Now()},
+					StartTime: &metav1.Time{Time: time.Now()},
 				},
 			},
 		},
@@ -158,6 +495,33 @@ func TestPipelineRun_Invalid(t *testing.T) {
 			Message: "invalid value: PipelineRun cannot be Pending after it is started",
 			Paths:   []string{"spec.status"},
 		},
+	}, {
+		name: "uses resources",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinerunname",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{Name: "foo"},
+				Resources:   []v1beta1.PipelineResourceBinding{{Name: "bar"}},
+			},
+		},
+		want: &apis.FieldError{Message: "must not set the field(s)", Paths: []string{"spec.resources"}},
+	}, {
+		name: "uses bundle (deprecated) on creation is disallowed",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinerunname",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name:   "foo",
+					Bundle: "example.com/foo/bar",
+				},
+			},
+		},
+		want: &apis.FieldError{Message: "must not set the field(s)", Paths: []string{"spec.pipelineRef.bundle"}},
+		wc:   apis.WithinCreate,
 	}}
 
 	for _, tc := range tests {
@@ -211,35 +575,329 @@ func TestPipelineRun_Validate(t *testing.T) {
 				Name: "pipelinelinename",
 			},
 			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ArrayOrString{
+						Type:     v1beta1.ParamTypeArray,
+						ArrayVal: []string{"hello", "pipeline"},
+					},
+				}},
 				PipelineSpec: &v1beta1.PipelineSpec{
 					Params: []v1beta1.ParamSpec{{
-						Name: "pipeline-words",
+						Name: "pipeline-words-2",
 						Type: v1beta1.ParamTypeArray,
 					}},
 					Tasks: []v1beta1.PipelineTask{{
 						Name: "echoit",
-						Params: []v1beta1.Param{{
+						Params: v1beta1.Params{{
 							Name: "task-words",
-							Value: v1beta1.ArrayOrString{
+							Value: v1beta1.ParamValue{
+								Type:     v1beta1.ParamTypeArray,
 								ArrayVal: []string{"$(params.pipeline-words)"},
 							},
 						}},
 						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
 							Params: []v1beta1.ParamSpec{{
-								Name: "task-words",
+								Name: "task-words-2",
 								Type: v1beta1.ParamTypeArray,
 							}},
 							Steps: []v1beta1.Step{{
 								Name:    "echo",
 								Image:   "ubuntu",
 								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words[*])"},
+							}, {
+								Name:    "echo-2",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words-2[*])"},
+							}, {
+								Name:    "echo-3",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
 								Args:    []string{"$(params.task-words[*])"},
+							}, {
+								Name:    "echo-4",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.task-words-2[*])"},
 							}},
 						}},
 					}},
 				},
 			},
 		},
+	}, {
+		name: "propagating params with pipelinespec and taskspec",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ArrayOrString{
+						Type:     v1beta1.ParamTypeArray,
+						ArrayVal: []string{"hello", "pipeline"},
+					},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words[*])"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+	}, {
+		name: "propagating object params with pipelinespec and taskspec",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ParamValue{
+						Type:      v1beta1.ParamTypeObject,
+						ObjectVal: map[string]string{"hello": "pipeline"},
+					},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words.hello)"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+	}, {
+		name: "propagating object params no value in params but value in default",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ParamValue{
+						Type: v1beta1.ParamTypeObject,
+					},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Params: []v1beta1.ParamSpec{{
+						Name: "pipeline-words",
+						Type: v1beta1.ParamTypeObject,
+						Properties: map[string]v1beta1.PropertySpec{
+							"hello": {Type: v1beta1.ParamTypeString},
+						},
+						Default: &v1beta1.ParamValue{
+							Type:      v1beta1.ParamTypeObject,
+							ObjectVal: map[string]string{"hello": "pipelinespec"},
+						},
+					}},
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words.hello)"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+	}, {
+		name: "propagating object params with some params defined in taskspec only",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Params: v1beta1.Params{{
+					Name: "pipeline-words",
+					Value: v1beta1.ParamValue{
+						Type:      v1beta1.ParamTypeObject,
+						ObjectVal: map[string]string{"hello": "pipeline"},
+					},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Params: []v1beta1.ParamSpec{{
+								Name: "task-words",
+								Type: v1beta1.ParamTypeObject,
+								Properties: map[string]v1beta1.PropertySpec{
+									"hello": {Type: v1beta1.ParamTypeString},
+								},
+								Default: &v1beta1.ParamValue{
+									Type:      v1beta1.ParamTypeObject,
+									ObjectVal: map[string]string{"hello": "taskspec"},
+								},
+							}},
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(params.pipeline-words.hello)", "$(params.task-words.hello)"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+	}, {
+		name: "propagating workspaces",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Workspaces: []v1beta1.WorkspaceBinding{{
+					Name:     "ws",
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(workspaces.ws.path)"},
+							}},
+						}},
+					}},
+					Finally: []v1beta1.PipelineTask{{
+						Name: "echoitifinally",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(workspaces.ws.path)"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+		wc: cfgtesting.EnableAlphaAPIFields,
+	}, {
+		name: "propagating workspaces partially defined",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Workspaces: []v1beta1.WorkspaceBinding{{
+					Name:     "ws",
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Workspaces: []v1beta1.PipelineWorkspaceDeclaration{{
+						Name: "ws",
+					}},
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(workspaces.ws.path)"},
+							}},
+						}},
+					}},
+					Finally: []v1beta1.PipelineTask{{
+						Name: "echoitfinally",
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(workspaces.ws.path)"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+		wc: cfgtesting.EnableAlphaAPIFields,
+	}, {
+		name: "propagating workspaces fully defined",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				Workspaces: []v1beta1.WorkspaceBinding{{
+					Name:     "ws",
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				}},
+				PipelineSpec: &v1beta1.PipelineSpec{
+					Workspaces: []v1beta1.PipelineWorkspaceDeclaration{{
+						Name: "ws",
+					}},
+					Tasks: []v1beta1.PipelineTask{{
+						Name: "echoit",
+						Workspaces: []v1beta1.WorkspacePipelineTaskBinding{{
+							Name:    "ws",
+							SubPath: "/foo",
+						}},
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Workspaces: []v1beta1.WorkspaceDeclaration{{
+								Name: "ws",
+							}},
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(workspaces.ws.path)"},
+							}},
+						}},
+					}},
+					Finally: []v1beta1.PipelineTask{{
+						Name: "echoitfinally",
+						Workspaces: []v1beta1.WorkspacePipelineTaskBinding{{
+							Name:    "ws",
+							SubPath: "/foo",
+						}},
+						TaskSpec: &v1beta1.EmbeddedTask{TaskSpec: v1beta1.TaskSpec{
+							Workspaces: []v1beta1.WorkspaceDeclaration{{
+								Name: "ws",
+							}},
+							Steps: []v1beta1.Step{{
+								Name:    "echo",
+								Image:   "ubuntu",
+								Command: []string{"echo"},
+								Args:    []string{"$(workspaces.ws.path)"},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+		wc: cfgtesting.EnableAlphaAPIFields,
 	}, {
 		name: "pipelinerun pending",
 		pr: v1beta1.PipelineRun{
@@ -254,20 +912,6 @@ func TestPipelineRun_Validate(t *testing.T) {
 			},
 		},
 	}, {
-		name: "do not validate spec on delete",
-		pr: v1beta1.PipelineRun{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "pipelinelinename",
-			},
-			Spec: v1beta1.PipelineRunSpec{
-				PipelineRef: &v1beta1.PipelineRef{
-					Name: "prname",
-				},
-				Timeout: &metav1.Duration{Duration: -48 * time.Hour},
-			},
-		},
-		wc: apis.WithinDelete,
-	}, {
 		name: "pipelinerun cancelled",
 		pr: v1beta1.PipelineRun{
 			ObjectMeta: metav1.ObjectMeta{
@@ -275,19 +919,6 @@ func TestPipelineRun_Validate(t *testing.T) {
 			},
 			Spec: v1beta1.PipelineRunSpec{
 				Status: v1beta1.PipelineRunSpecStatusCancelled,
-				PipelineRef: &v1beta1.PipelineRef{
-					Name: "prname",
-				},
-			},
-		},
-	}, {
-		name: "pipelinerun cancelled deprecated",
-		pr: v1beta1.PipelineRun{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "pipelinerunname",
-			},
-			Spec: v1beta1.PipelineRunSpec{
-				Status: v1beta1.PipelineRunSpecStatusCancelledDeprecated,
 				PipelineRef: &v1beta1.PipelineRef{
 					Name: "prname",
 				},
@@ -320,35 +951,7 @@ func TestPipelineRun_Validate(t *testing.T) {
 			},
 		},
 	}, {
-		name: "alpha feature: valid resolver",
-		pr: v1beta1.PipelineRun{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "pr",
-			},
-			Spec: v1beta1.PipelineRunSpec{
-				PipelineRef: &v1beta1.PipelineRef{ResolverRef: v1beta1.ResolverRef{Resolver: "git"}},
-			},
-		},
-		wc: enableAlphaAPIFields,
-	}, {
-		name: "alpha feature: valid resolver with resource parameters",
-		pr: v1beta1.PipelineRun{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "pr",
-			},
-			Spec: v1beta1.PipelineRunSpec{
-				PipelineRef: &v1beta1.PipelineRef{ResolverRef: v1beta1.ResolverRef{Resolver: "git", Resource: []v1beta1.ResolverParam{{
-					Name:  "repo",
-					Value: "https://github.com/tektoncd/pipeline.git",
-				}, {
-					Name:  "branch",
-					Value: "baz",
-				}}}},
-			},
-		},
-		wc: enableAlphaAPIFields,
-	}, {
-		name: "alpha feature: sidecar and step overrides",
+		name: "beta feature: sidecar and step overrides",
 		pr: v1beta1.PipelineRun{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "pr",
@@ -358,23 +961,27 @@ func TestPipelineRun_Validate(t *testing.T) {
 				TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{
 					{
 						PipelineTaskName: "bar",
-						StepOverrides: []v1beta1.TaskRunStepOverride{{
-							Name: "task-1",
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
-							}},
+						StepOverrides: []v1beta1.TaskRunStepOverride{
+							{
+								Name: "task-1",
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
+								},
+							},
 						},
-						SidecarOverrides: []v1beta1.TaskRunSidecarOverride{{
-							Name: "task-1",
-							Resources: corev1.ResourceRequirements{
-								Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
-							}},
+						SidecarOverrides: []v1beta1.TaskRunSidecarOverride{
+							{
+								Name: "task-1",
+								Resources: corev1.ResourceRequirements{
+									Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
+								},
+							},
 						},
 					},
 				},
 			},
 		},
-		wc: enableAlphaAPIFields,
+		wc: cfgtesting.EnableBetaAPIFields,
 	}}
 
 	for _, ts := range tests {
@@ -397,12 +1004,6 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 		wantErr     *apis.FieldError
 		withContext func(context.Context) context.Context
 	}{{
-		name: "pipelineRef without Pipeline Name",
-		spec: v1beta1.PipelineRunSpec{
-			PipelineRef: &v1beta1.PipelineRef{},
-		},
-		wantErr: apis.ErrMissingField("pipelineRef.name"),
-	}, {
 		name: "pipelineRef and pipelineSpec together",
 		spec: v1beta1.PipelineRunSpec{
 			PipelineRef: &v1beta1.PipelineRef{
@@ -414,9 +1015,48 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 					TaskRef: &v1beta1.TaskRef{
 						Name: "mytask",
 					},
-				}}},
+				}},
+			},
 		},
 		wantErr: apis.ErrMultipleOneOf("pipelineRef", "pipelineSpec"),
+	}, {
+		name: "pipelineSpec when inline disabled all",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineSpec: &v1beta1.PipelineSpec{
+				Tasks: []v1beta1.PipelineTask{{
+					Name: "mytask",
+					TaskRef: &v1beta1.TaskRef{
+						Name: "mytask",
+					},
+				}}},
+		},
+		wantErr: apis.ErrDisallowedFields("pipelineSpec"),
+		withContext: func(ctx context.Context) context.Context {
+			return config.ToContext(ctx, &config.Config{
+				FeatureFlags: &config.FeatureFlags{
+					DisableInlineSpec: "taskrun,pipelinerun,pipeline",
+				},
+			})
+		},
+	}, {
+		name: "pipelineSpec when inline disabled",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineSpec: &v1beta1.PipelineSpec{
+				Tasks: []v1beta1.PipelineTask{{
+					Name: "mytask",
+					TaskRef: &v1beta1.TaskRef{
+						Name: "mytask",
+					},
+				}}},
+		},
+		wantErr: apis.ErrDisallowedFields("pipelineSpec"),
+		withContext: func(ctx context.Context) context.Context {
+			return config.ToContext(ctx, &config.Config{
+				FeatureFlags: &config.FeatureFlags{
+					DisableInlineSpec: "pipelinerun",
+				},
+			})
+		},
 	}, {
 		name: "workspaces may only appear once",
 		spec: v1beta1.PipelineRunSpec{
@@ -456,63 +1096,6 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 			},
 		},
 	}, {
-		name: "pipelineref resolver disallowed without alpha feature gate",
-		spec: v1beta1.PipelineRunSpec{
-			PipelineRef: &v1beta1.PipelineRef{
-				Name: "foo",
-				ResolverRef: v1beta1.ResolverRef{
-					Resolver: "foo",
-				},
-			},
-		},
-		wantErr: apis.ErrDisallowedFields("resolver").ViaField("pipelineRef"),
-	}, {
-		name: "pipelineref resource disallowed without alpha feature gate",
-		spec: v1beta1.PipelineRunSpec{
-			PipelineRef: &v1beta1.PipelineRef{
-				Name: "foo",
-				ResolverRef: v1beta1.ResolverRef{
-					Resource: []v1beta1.ResolverParam{},
-				},
-			},
-		},
-		wantErr: apis.ErrDisallowedFields("resource").ViaField("pipelineRef"),
-	}, {
-		name: "pipelineref resource disallowed without resolver",
-		spec: v1beta1.PipelineRunSpec{
-			PipelineRef: &v1beta1.PipelineRef{
-				ResolverRef: v1beta1.ResolverRef{
-					Resource: []v1beta1.ResolverParam{},
-				},
-			},
-		},
-		wantErr:     apis.ErrMissingField("resolver").ViaField("pipelineRef"),
-		withContext: enableAlphaAPIFields,
-	}, {
-		name: "pipelineref resolver disallowed in conjunction with pipelineref name",
-		spec: v1beta1.PipelineRunSpec{
-			PipelineRef: &v1beta1.PipelineRef{
-				Name: "foo",
-				ResolverRef: v1beta1.ResolverRef{
-					Resolver: "bar",
-				},
-			},
-		},
-		wantErr:     apis.ErrMultipleOneOf("name", "resolver").ViaField("pipelineRef"),
-		withContext: enableAlphaAPIFields,
-	}, {
-		name: "pipelineref resolver disallowed in conjunction with pipelineref bundle",
-		spec: v1beta1.PipelineRunSpec{
-			PipelineRef: &v1beta1.PipelineRef{
-				Bundle: "foo",
-				ResolverRef: v1beta1.ResolverRef{
-					Resolver: "baz",
-				},
-			},
-		},
-		wantErr:     apis.ErrMultipleOneOf("bundle", "resolver").ViaField("pipelineRef"),
-		withContext: enableAlphaAPIFields,
-	}, {
 		name: "duplicate stepOverride names",
 		spec: v1beta1.PipelineRunSpec{
 			PipelineRef: &v1beta1.PipelineRef{Name: "foo"},
@@ -526,41 +1109,47 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 			},
 		},
 		wantErr:     apis.ErrMultipleOneOf("taskRunSpecs[0].stepOverrides[1].name"),
-		withContext: enableAlphaAPIFields,
+		withContext: cfgtesting.EnableAlphaAPIFields,
 	}, {
-		name: "stepOverride disallowed without alpha feature gate",
+		name: "stepOverride disallowed without alpha or beta feature gate",
 		spec: v1beta1.PipelineRunSpec{
 			PipelineRef: &v1beta1.PipelineRef{Name: "foo"},
 			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{
 				{
 					PipelineTaskName: "bar",
-					StepOverrides: []v1beta1.TaskRunStepOverride{{
-						Name: "task-1",
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
-						}},
+					StepOverrides: []v1beta1.TaskRunStepOverride{
+						{
+							Name: "task-1",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
+							},
+						},
 					},
 				},
 			},
 		},
-		wantErr: apis.ErrDisallowedFields("stepOverrides").ViaIndex(0).ViaField("taskRunSpecs"),
+		withContext: cfgtesting.EnableStableAPIFields,
+		wantErr:     apis.ErrGeneric("stepOverrides requires \"enable-api-fields\" feature gate to be \"alpha\" or \"beta\" but it is \"stable\"").ViaIndex(0).ViaField("taskRunSpecs"),
 	}, {
-		name: "sidecarOverride disallowed without alpha feature gate",
+		name: "sidecarOverride disallowed without alpha or beta feature gate",
 		spec: v1beta1.PipelineRunSpec{
 			PipelineRef: &v1beta1.PipelineRef{Name: "foo"},
 			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{
 				{
 					PipelineTaskName: "bar",
-					SidecarOverrides: []v1beta1.TaskRunSidecarOverride{{
-						Name: "task-1",
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
-						}},
+					SidecarOverrides: []v1beta1.TaskRunSidecarOverride{
+						{
+							Name: "task-1",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
+							},
+						},
 					},
 				},
 			},
 		},
-		wantErr: apis.ErrDisallowedFields("sidecarOverrides").ViaIndex(0).ViaField("taskRunSpecs"),
+		withContext: cfgtesting.EnableStableAPIFields,
+		wantErr:     apis.ErrGeneric("sidecarOverrides requires \"enable-api-fields\" feature gate to be \"alpha\" or \"beta\" but it is \"stable\"").ViaIndex(0).ViaField("taskRunSpecs"),
 	}, {
 		name: "missing stepOverride name",
 		spec: v1beta1.PipelineRunSpec{
@@ -568,16 +1157,18 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{
 				{
 					PipelineTaskName: "bar",
-					StepOverrides: []v1beta1.TaskRunStepOverride{{
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
-						}},
+					StepOverrides: []v1beta1.TaskRunStepOverride{
+						{
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
+							},
+						},
 					},
 				},
 			},
 		},
 		wantErr:     apis.ErrMissingField("taskRunSpecs[0].stepOverrides[0].name"),
-		withContext: enableAlphaAPIFields,
+		withContext: cfgtesting.EnableAlphaAPIFields,
 	}, {
 		name: "duplicate sidecarOverride names",
 		spec: v1beta1.PipelineRunSpec{
@@ -592,7 +1183,7 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 			},
 		},
 		wantErr:     apis.ErrMultipleOneOf("taskRunSpecs[0].sidecarOverrides[1].name"),
-		withContext: enableAlphaAPIFields,
+		withContext: cfgtesting.EnableAlphaAPIFields,
 	}, {
 		name: "missing sidecarOverride name",
 		spec: v1beta1.PipelineRunSpec{
@@ -600,17 +1191,61 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{
 				{
 					PipelineTaskName: "bar",
-					SidecarOverrides: []v1beta1.TaskRunSidecarOverride{{
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
-						}},
+					SidecarOverrides: []v1beta1.TaskRunSidecarOverride{
+						{
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
+							},
+						},
 					},
 				},
 			},
 		},
 		wantErr:     apis.ErrMissingField("taskRunSpecs[0].sidecarOverrides[0].name"),
-		withContext: enableAlphaAPIFields,
+		withContext: cfgtesting.EnableAlphaAPIFields,
+	}, {
+		name: "invalid both step-level (stepOverrides.resources) and task-level (taskRunSpecs.resources) resource requirements configured",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{Name: "pipeline"},
+			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{
+				{
+					PipelineTaskName: "pipelineTask",
+					StepOverrides: []v1beta1.TaskRunStepOverride{
+						{
+							Name: "stepOverride",
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("1Gi")},
+							},
+						},
+					},
+					ComputeResources: &corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("2Gi")},
+					},
+				},
+			},
+		},
+		wantErr: apis.ErrMultipleOneOf(
+			"taskRunSpecs[0].stepOverrides.resources",
+			"taskRunSpecs[0].computeResources",
+		),
+		withContext: cfgtesting.EnableAlphaAPIFields,
+	}, {
+		name: "computeResources disallowed without beta feature gate",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{Name: "foo"},
+			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{
+				{
+					PipelineTaskName: "bar",
+					ComputeResources: &corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("2Gi")},
+					},
+				},
+			},
+		},
+		withContext: cfgtesting.EnableStableAPIFields,
+		wantErr:     apis.ErrGeneric("computeResources requires \"enable-api-fields\" feature gate to be \"alpha\" or \"beta\" but it is \"stable\"").ViaIndex(0).ViaField("taskRunSpecs"),
 	}}
+
 	for _, ps := range tests {
 		t.Run(ps.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -627,8 +1262,9 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 
 func TestPipelineRunSpec_Validate(t *testing.T) {
 	tests := []struct {
-		name string
-		spec v1beta1.PipelineRunSpec
+		name        string
+		spec        v1beta1.PipelineRunSpec
+		withContext func(context.Context) context.Context
 	}{{
 		name: "PipelineRun without pipelineRef",
 		spec: v1beta1.PipelineRunSpec{
@@ -641,10 +1277,65 @@ func TestPipelineRunSpec_Validate(t *testing.T) {
 				}},
 			},
 		},
+	}, {
+		name: "valid task-level (taskRunSpecs.resources) resource requirements configured",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{Name: "pipeline"},
+			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{{
+				PipelineTaskName: "pipelineTask",
+				ComputeResources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("2Gi")},
+				},
+			}},
+		},
+		withContext: cfgtesting.EnableBetaAPIFields,
+	}, {
+		name: "valid task-level (taskRunSpecs.resources) resource requirements configured with stepOverride",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{Name: "pipeline"},
+			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{{
+				PipelineTaskName: "pipelineTask",
+				StepOverrides: []v1beta1.TaskRunStepOverride{{
+					Name: "stepOverride",
+				}},
+				ComputeResources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("2Gi")},
+				},
+			}},
+		},
+		withContext: cfgtesting.EnableAlphaAPIFields,
+	}, {
+		name: "valid sidecar and task-level (taskRunSpecs.resources) resource requirements configured",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{Name: "pipeline"},
+			TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{{
+				PipelineTaskName: "pipelineTask",
+				StepOverrides: []v1beta1.TaskRunStepOverride{{
+					Name: "stepOverride",
+				}},
+				ComputeResources: &corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceMemory: corev1resources.MustParse("2Gi")},
+				},
+				SidecarOverrides: []v1beta1.TaskRunSidecarOverride{{
+					Name: "sidecar",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceMemory: corev1resources.MustParse("4Gi"),
+						},
+					},
+				}},
+			}},
+		},
+		withContext: cfgtesting.EnableAlphaAPIFields,
 	}}
+
 	for _, ps := range tests {
 		t.Run(ps.name, func(t *testing.T) {
-			if err := ps.spec.Validate(context.Background()); err != nil {
+			ctx := context.Background()
+			if ps.withContext != nil {
+				ctx = ps.withContext(ctx)
+			}
+			if err := ps.spec.Validate(ctx); err != nil {
 				t.Error(err)
 			}
 		})
@@ -845,7 +1536,7 @@ func TestPipelineRun_InvalidTimeouts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			err := tc.pr.Validate(ctx)
-			if d := cmp.Diff(err.Error(), tc.want.Error()); d != "" {
+			if d := cmp.Diff(tc.want.Error(), err.Error()); d != "" {
 				t.Error(diff.PrintWantGot(d))
 			}
 		})
@@ -891,6 +1582,38 @@ func TestPipelineRunWithTimeout_Validate(t *testing.T) {
 				},
 			},
 		},
+	}, {
+		name: "timeouts.tasks only",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: 0 * time.Hour},
+					Tasks:    &metav1.Duration{Duration: 30 * time.Minute},
+				},
+			},
+		},
+	}, {
+		name: "timeouts.finally only",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: 0 * time.Hour},
+					Finally:  &metav1.Duration{Duration: 30 * time.Minute},
+				},
+			},
+		},
 	}}
 
 	for _, ts := range tests {
@@ -906,28 +1629,244 @@ func TestPipelineRunWithTimeout_Validate(t *testing.T) {
 	}
 }
 
-func enableTektonOCIBundles(t *testing.T) func(context.Context) context.Context {
-	return func(ctx context.Context) context.Context {
-		s := config.NewStore(logtesting.TestLogger(t))
-		s.OnConfigChanged(&corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{Name: config.GetFeatureFlagsConfigName()},
-			Data: map[string]string{
-				"enable-tekton-oci-bundles": "true",
-			},
+// TestPipelineRunSpecBetaFeatures tests the beta API-driven features
+// of PipelineRunSpec are correctly governed `enable-api-fields`, which
+// must be set to "alpha" or "beta".
+func TestPipelineRunSpecBetaFeatures(t *testing.T) {
+	tts := []struct {
+		name string
+		spec v1beta1.PipelineSpec
+	}{{
+		name: "pipeline tasks - use of resolver",
+		spec: v1beta1.PipelineSpec{
+			Tasks: []v1beta1.PipelineTask{{
+				Name:    "uses-resolver",
+				TaskRef: &v1beta1.TaskRef{ResolverRef: v1beta1.ResolverRef{Resolver: "bar"}},
+			}},
+		},
+	}, {
+		name: "pipeline tasks - use of resolver params",
+		spec: v1beta1.PipelineSpec{
+			Tasks: []v1beta1.PipelineTask{{
+				Name:    "uses-resolver-params",
+				TaskRef: &v1beta1.TaskRef{ResolverRef: v1beta1.ResolverRef{Resolver: "bar", Params: v1beta1.Params{{}}}},
+			}},
+		},
+	}, {
+		name: "finally tasks - use of resolver",
+		spec: v1beta1.PipelineSpec{
+			Tasks: []v1beta1.PipelineTask{{
+				Name:    "valid-pipeline-task",
+				TaskRef: &v1beta1.TaskRef{Name: "foo-task"},
+			}},
+			Finally: []v1beta1.PipelineTask{{
+				Name:    "uses-resolver",
+				TaskRef: &v1beta1.TaskRef{ResolverRef: v1beta1.ResolverRef{Resolver: "bar"}},
+			}},
+		},
+	}, {
+		name: "finally tasks - use of resolver params",
+		spec: v1beta1.PipelineSpec{
+			Tasks: []v1beta1.PipelineTask{{
+				Name:    "valid-pipeline-task",
+				TaskRef: &v1beta1.TaskRef{Name: "foo-task"},
+			}},
+			Finally: []v1beta1.PipelineTask{{
+				Name:    "uses-resolver-params",
+				TaskRef: &v1beta1.TaskRef{ResolverRef: v1beta1.ResolverRef{Resolver: "bar", Params: v1beta1.Params{{}}}},
+			}},
+		},
+	}}
+	for _, tt := range tts {
+		t.Run(tt.name, func(t *testing.T) {
+			pr := v1beta1.PipelineRun{ObjectMeta: metav1.ObjectMeta{Name: "foo"}, Spec: v1beta1.PipelineRunSpec{
+				PipelineSpec: &tt.spec,
+			}}
+			ctx := cfgtesting.EnableStableAPIFields(context.Background())
+			if err := pr.Validate(ctx); err == nil {
+				t.Errorf("no error when using beta field when `enable-api-fields` is stable")
+			}
+
+			ctx = cfgtesting.EnableBetaAPIFields(context.Background())
+			if err := pr.Validate(ctx); err != nil {
+				t.Errorf("unexpected error when using beta field: %s", err)
+			}
 		})
-		return s.ToContext(ctx)
 	}
 }
-
-func enableAlphaAPIFields(ctx context.Context) context.Context {
-	featureFlags, _ := config.NewFeatureFlagsFromMap(map[string]string{
-		"enable-api-fields": "alpha",
-	})
-	cfg := &config.Config{
-		Defaults: &config.Defaults{
-			DefaultTimeoutMinutes: 60,
+func TestPipelineRunSpec_ValidateUpdate(t *testing.T) {
+	tests := []struct {
+		name                string
+		isCreate            bool
+		isUpdate            bool
+		baselinePipelineRun *v1beta1.PipelineRun
+		pipelineRun         *v1beta1.PipelineRun
+		expectedError       apis.FieldError
+	}{
+		{
+			name: "is create ctx",
+			pipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{},
+			},
+			isCreate:      true,
+			isUpdate:      false,
+			expectedError: apis.FieldError{},
+		}, {
+			name: "is update ctx, no changes",
+			baselinePipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "",
+				},
+			},
+			pipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "",
+				},
+			},
+			isCreate:      false,
+			isUpdate:      true,
+			expectedError: apis.FieldError{},
+		}, {
+			name:                "is update ctx, baseline is nil, skip validation",
+			baselinePipelineRun: nil,
+			pipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Timeouts: &v1beta1.TimeoutFields{
+						Pipeline: &metav1.Duration{Duration: 1},
+					},
+				},
+			},
+			isCreate:      false,
+			isUpdate:      true,
+			expectedError: apis.FieldError{},
+		}, {
+			name: "is update ctx, baseline is unknown, status changes from Empty to Cancelled",
+			baselinePipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "",
+				},
+				Status: v1beta1.PipelineRunStatus{
+					Status: duckv1.Status{
+						Conditions: duckv1.Conditions{
+							{Type: apis.ConditionSucceeded, Status: corev1.ConditionUnknown},
+						},
+					},
+				},
+			},
+			pipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "Cancelled",
+				},
+			},
+			isCreate:      false,
+			isUpdate:      true,
+			expectedError: apis.FieldError{},
+		}, {
+			name: "is update ctx, baseline is unknown, timeouts changes",
+			baselinePipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "",
+					Timeouts: &v1beta1.TimeoutFields{
+						Pipeline: &metav1.Duration{Duration: 0},
+					},
+				},
+				Status: v1beta1.PipelineRunStatus{
+					Status: duckv1.Status{
+						Conditions: duckv1.Conditions{
+							{Type: apis.ConditionSucceeded, Status: corev1.ConditionUnknown},
+						},
+					},
+				},
+			},
+			pipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Timeouts: &v1beta1.TimeoutFields{
+						Pipeline: &metav1.Duration{Duration: 1},
+					},
+				},
+			},
+			isCreate: false,
+			isUpdate: true,
+			expectedError: apis.FieldError{
+				Message: `invalid value: Once the PipelineRun has started, only status updates are allowed`,
+				Paths:   []string{""},
+			},
+		}, {
+			name: "is update ctx, baseline is unknown, status changes from PipelineRunPending to Empty, and timeouts changes",
+			baselinePipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "PipelineRunPending",
+					Timeouts: &v1beta1.TimeoutFields{
+						Pipeline: &metav1.Duration{Duration: 0},
+					},
+				},
+				Status: v1beta1.PipelineRunStatus{
+					Status: duckv1.Status{
+						Conditions: duckv1.Conditions{
+							{Type: apis.ConditionSucceeded, Status: corev1.ConditionUnknown},
+						},
+					},
+				},
+			},
+			pipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "",
+					Timeouts: &v1beta1.TimeoutFields{
+						Pipeline: &metav1.Duration{Duration: 1},
+					},
+				},
+			},
+			isCreate: false,
+			isUpdate: true,
+			expectedError: apis.FieldError{
+				Message: `invalid value: Once the PipelineRun has started, only status updates are allowed`,
+				Paths:   []string{""},
+			},
+		}, {
+			name: "is update ctx, baseline is done, status changes",
+			baselinePipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "PipelineRunPending",
+				},
+				Status: v1beta1.PipelineRunStatus{
+					Status: duckv1.Status{
+						Conditions: duckv1.Conditions{
+							{Type: apis.ConditionSucceeded, Status: corev1.ConditionTrue},
+						},
+					},
+				},
+			},
+			pipelineRun: &v1beta1.PipelineRun{
+				Spec: v1beta1.PipelineRunSpec{
+					Status: "TaskRunCancelled",
+				},
+			},
+			isCreate: false,
+			isUpdate: true,
+			expectedError: apis.FieldError{
+				Message: `invalid value: Once the PipelineRun is complete, no updates are allowed`,
+				Paths:   []string{""},
+			},
 		},
-		FeatureFlags: featureFlags,
 	}
-	return config.ToContext(ctx, cfg)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := config.ToContext(context.Background(), &config.Config{
+				FeatureFlags: &config.FeatureFlags{},
+				Defaults:     &config.Defaults{},
+			})
+			if tt.isCreate {
+				ctx = apis.WithinCreate(ctx)
+			}
+			if tt.isUpdate {
+				ctx = apis.WithinUpdate(ctx, tt.baselinePipelineRun)
+			}
+			pr := tt.pipelineRun
+			err := pr.Spec.ValidateUpdate(ctx)
+			if d := cmp.Diff(tt.expectedError.Error(), err.Error(), cmpopts.IgnoreUnexported(apis.FieldError{})); d != "" {
+				t.Errorf("PipelineRunSpec.ValidateUpdate() errors diff %s", diff.PrintWantGot(d))
+			}
+		})
+	}
 }

@@ -31,6 +31,7 @@ import (
 )
 
 func TestRun_Invalid(t *testing.T) {
+	invalidStatusMessage := "test status message"
 	for _, c := range []struct {
 		name string
 		run  *v1alpha1.Run
@@ -72,7 +73,7 @@ func TestRun_Invalid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "apiVersion",
 					Kind:       "kind",
 				},
@@ -92,7 +93,7 @@ func TestRun_Invalid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "",
 				},
 			},
@@ -105,7 +106,7 @@ func TestRun_Invalid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "blah",
 					Kind:       "",
 				},
@@ -144,30 +145,45 @@ func TestRun_Invalid(t *testing.T) {
 		},
 		want: apis.ErrMissingField("spec.spec.kind"),
 	}, {
+		name: "invalid statusMessage in Spec",
+		run: &v1alpha1.Run{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "temp",
+			},
+			Spec: v1alpha1.RunSpec{
+				Ref: &v1beta1.TaskRef{
+					APIVersion: "blah",
+					Kind:       "blah",
+				},
+				StatusMessage: v1alpha1.RunSpecStatusMessage(invalidStatusMessage),
+			},
+		},
+		want: apis.ErrInvalidValue("statusMessage should not be set if status is not set, but it is currently set to "+invalidStatusMessage, "statusMessage"),
+	}, {
 		name: "non-unique params",
 		run: &v1alpha1.Run{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "blah",
 					Kind:       "blah",
 				},
-				Params: []v1beta1.Param{{
+				Params: v1beta1.Params{{
 					Name:  "foo",
-					Value: *v1beta1.NewArrayOrString("foo"),
+					Value: *v1beta1.NewStructuredValues("foo"),
 				}, {
 					Name:  "foo",
-					Value: *v1beta1.NewArrayOrString("foo"),
+					Value: *v1beta1.NewStructuredValues("foo"),
 				}},
 			},
 		},
-		want: apis.ErrMultipleOneOf("spec.params"),
+		want: apis.ErrMultipleOneOf("spec.params[foo].name"),
 	}} {
 		t.Run(c.name, func(t *testing.T) {
 			err := c.run.Validate(context.Background())
-			if d := cmp.Diff(err.Error(), c.want.Error()); d != "" {
+			if d := cmp.Diff(c.want.Error(), err.Error()); d != "" {
 				t.Error(diff.PrintWantGot(d))
 			}
 		})
@@ -185,7 +201,7 @@ func TestRun_Valid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "blah",
 					Kind:       "blah",
 					Name:       "blah",
@@ -199,10 +215,25 @@ func TestRun_Valid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "blah",
 					Kind:       "blah",
 				},
+			},
+		},
+	}, {
+		name: "unnamed",
+		run: &v1alpha1.Run{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "temp",
+			},
+			Spec: v1alpha1.RunSpec{
+				Ref: &v1beta1.TaskRef{
+					APIVersion: "blah",
+					Kind:       "blah",
+				},
+				Status:        v1alpha1.RunSpecStatusCancelled,
+				StatusMessage: v1alpha1.RunSpecStatusMessage("test status vessage"),
 			},
 		},
 	}, {
@@ -227,16 +258,16 @@ func TestRun_Valid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "blah",
 					Kind:       "blah",
 				},
-				Params: []v1beta1.Param{{
+				Params: v1beta1.Params{{
 					Name:  "foo",
-					Value: *v1beta1.NewArrayOrString("foo"),
+					Value: *v1beta1.NewStructuredValues("foo"),
 				}, {
 					Name:  "bar",
-					Value: *v1beta1.NewArrayOrString("bar"),
+					Value: *v1beta1.NewStructuredValues("bar"),
 				}},
 			},
 		},
@@ -247,7 +278,7 @@ func TestRun_Valid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "blah",
 					Kind:       "blah",
 				},
@@ -278,7 +309,7 @@ func TestRun_Workspaces_Invalid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "blah",
 					Kind:       "blah",
 				},
@@ -290,7 +321,7 @@ func TestRun_Workspaces_Invalid(t *testing.T) {
 				}},
 			},
 		},
-		wantErr: apis.ErrMissingField("workspace.persistentvolumeclaim.claimname"),
+		wantErr: apis.ErrMissingField("spec.workspaces[0].persistentvolumeclaim.claimname"),
 	}, {
 		name: "bind same workspace twice",
 		run: &v1alpha1.Run{
@@ -298,7 +329,7 @@ func TestRun_Workspaces_Invalid(t *testing.T) {
 				Name: "temp",
 			},
 			Spec: v1alpha1.RunSpec{
-				Ref: &v1alpha1.TaskRef{
+				Ref: &v1beta1.TaskRef{
 					APIVersion: "blah",
 					Kind:       "blah",
 				},
@@ -311,7 +342,7 @@ func TestRun_Workspaces_Invalid(t *testing.T) {
 				}},
 			},
 		},
-		wantErr: apis.ErrMultipleOneOf("spec.workspaces.name"),
+		wantErr: apis.ErrMultipleOneOf("spec.workspaces[1].name"),
 	}}
 	for _, ts := range tests {
 		t.Run(ts.name, func(t *testing.T) {

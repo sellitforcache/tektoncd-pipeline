@@ -1,9 +1,10 @@
 <!--
 ---
 linkTitle: "Tasks"
-weight: 200
+weight: 201
 ---
 -->
+
 # Tasks
 
 - [Overview](#overview)
@@ -18,13 +19,16 @@ weight: 200
     - [Accessing Step's `exitCode` in subsequent `Steps`](#accessing-steps-exitcode-in-subsequent-steps)
     - [Produce a task result with `onError`](#produce-a-task-result-with-onerror)
     - [Breakpoint on failure with `onError`](#breakpoint-on-failure-with-onerror)
+    - [Redirecting step output streams with `stdoutConfig` and `stderrConfig`](#redirecting-step-output-streams-with-stdoutconfig-and-stderrconfig)
+    - [Guarding `Step` execution using `when` expressions](#guarding-step-execution-using-when-expressions)
   - [Specifying `Parameters`](#specifying-parameters)
-  - [Specifying `Resources`](#specifying-resources)
   - [Specifying `Workspaces`](#specifying-workspaces)
   - [Emitting `Results`](#emitting-results)
+    - [Larger `Results` using sidecar logs](#larger-results-using-sidecar-logs)
   - [Specifying `Volumes`](#specifying-volumes)
   - [Specifying a `Step` template](#specifying-a-step-template)
   - [Specifying `Sidecars`](#specifying-sidecars)
+  - [Specifying a `DisplayName`](#specifying-a-display-name)
   - [Adding a description](#adding-a-description)
   - [Using variable substitution](#using-variable-substitution)
     - [Substituting parameters and resources](#substituting-parameters-and-resources)
@@ -54,7 +58,6 @@ namespace, while a `ClusterTask` is available across the entire cluster.
 A `Task` declaration includes the following elements:
 
 - [Parameters](#specifying-parameters)
-- [Resources](#specifying-resources)
 - [Steps](#defining-steps)
 - [Workspaces](#specifying-workspaces)
 - [Results](#emitting-results)
@@ -75,10 +78,6 @@ A `Task` definition supports the following fields:
 - Optional:
   - [`description`](#adding-a-description) - An informative description of the `Task`.
   - [`params`](#specifying-parameters) - Specifies execution parameters for the `Task`.
-  - [`resources`](#specifying-resources) - **alpha only** Specifies
-    [`PipelineResources`](resources.md) needed or created by your`Task`.
-    - [`inputs`](#specifying-resources) - Specifies the resources ingested by the `Task`.
-    - [`outputs`](#specifying-resources) - Specifies the resources produced by the `Task`.
   - [`workspaces`](#specifying-workspaces) - Specifies paths to volumes required by the `Task`.
   - [`results`](#emitting-results) - Specifies the names under which `Tasks` write execution results.
   - [`volumes`](#specifying-volumes) - Specifies one or more volumes that will be available to the `Steps` in the `Task`.
@@ -91,7 +90,7 @@ A `Task` definition supports the following fields:
 The non-functional example below demonstrates the use of most of the above-mentioned fields:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: Task
 metadata:
   name: example-task-name
@@ -101,13 +100,9 @@ spec:
       type: string
       description: The path to the dockerfile to build
       default: /workspace/workspace/Dockerfile
-  resources:
-    inputs:
-      - name: workspace
-        type: git
-    outputs:
-      - name: builtImage
-        type: image
+    - name: builtImageUrl
+      type: string
+      description: location to push the built image to
   steps:
     - name: ubuntu-example
       image: ubuntu
@@ -117,7 +112,7 @@ spec:
       args: ["$(params.pathToDockerFile)"]
     - name: dockerfile-pushexample
       image: gcr.io/example-builders/push-example
-      args: ["push", "$(resources.outputs.builtImage.url)"]
+      args: ["push", "$(params.builtImageUrl)"]
       volumeMounts:
         - name: docker-socket-example
           mountPath: /var/run/docker.sock
@@ -128,6 +123,8 @@ spec:
 
 ### `Task` vs. `ClusterTask`
 
+**Note: ClusterTasks are deprecated.** Please use the [cluster resolver](./cluster-resolver.md) instead.
+
 A `ClusterTask` is a `Task` scoped to the entire cluster instead of a single namespace.
 A `ClusterTask` behaves identically to a `Task` and therefore everything in this document
 applies to both.
@@ -136,7 +133,33 @@ applies to both.
           If not specified, the `kind` sub-field defaults to `Task.`
 
 Below is an example of a Pipeline declaration that uses a `ClusterTask`:
+**Note**:
+- There is no `v1` API specification for `ClusterTask` but a `v1beta1 clustertask` can still be referenced in a `v1 pipeline`.
+- The cluster resolver syntax below can be used to reference any task, not just a clustertask.
 
+{{< tabs >}}
+{{% tab header="v1 & v1beta1" %}}
+```yaml
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: demo-pipeline
+spec:
+  tasks:
+    - name: build-skaffold-web
+      taskRef:
+        resolver: cluster
+        params:
+        - name: kind
+          value: task
+        - name: name
+          value: build-push
+        - name: namespace
+          value: default
+```
+{{% /tab %}}
+
+{{% tab header="v1beta1" %}}
 ```yaml
 apiVersion: tekton.dev/v1beta1
 kind: Pipeline
@@ -151,6 +174,8 @@ spec:
         kind: ClusterTask
       params: ....
 ```
+{{% /tab %}}
+{{< /tabs >}}
 
 ### Defining `Steps`
 
@@ -170,8 +195,29 @@ The following requirements apply to each container image referenced in a `steps`
   though Tekton runs `Steps` sequentially.
   For more detail, see [Compute Resources in Tekton](./compute-resources.md).
 
+**Note:** If the image referenced in the `step` field is from a private registry, `TaskRuns` or `PipelineRuns` that consume the task
+          must provide the `imagePullSecrets` in a [podTemplate](./podtemplates.md).
+
 Below is an example of setting the resource requests and limits for a step:
 
+
+{{< tabs >}}
+{{% tab header="v1" %}}
+```yaml
+spec:
+  steps:
+    - name: step-with-limts
+      computeResources:
+        requests:
+          memory: 1Gi
+          cpu: 500m
+        limits:
+          memory: 2Gi
+          cpu: 800m
+```
+{{% /tab %}}
+
+{{% tab header="v1beta1" %}}
 ```yaml
 spec:
   steps:
@@ -184,6 +230,8 @@ spec:
           memory: 2Gi
           cpu: 800m
 ```
+{{% /tab %}}
+{{< /tabs >}}
 
 #### Reserved directories
 
@@ -330,7 +378,7 @@ steps:
       echo "I am supposed to sleep for 60 seconds!"
       sleep 60
     timeout: 5s
-``` 
+```
 
 #### Specifying `onError` for a `step`
 
@@ -382,8 +430,8 @@ kubectl get tr taskrun-unit-test-t6qcl -o json | jq .status
   ],
 ```
 
-For an end-to-end example, see [the taskRun ignoring a step error](../examples/v1beta1/taskruns/ignore-step-error.yaml)
-and [the pipelineRun ignoring a step error](../examples/v1beta1/pipelineruns/ignore-step-error.yaml).
+For an end-to-end example, see [the taskRun ignoring a step error](../examples/v1/taskruns/ignore-step-error.yaml)
+and [the pipelineRun ignoring a step error](../examples/v1/pipelineruns/ignore-step-error.yaml).
 
 #### Accessing Step's `exitCode` in subsequent `Steps`
 
@@ -438,39 +486,255 @@ steps:
 [tools](taskruns.md#debug-environment) to declare the step as a failure or a success. Specifying
 [breakpoint](taskruns.md#breakpoint-on-failure) at the `taskRun` level overrides ignoring a step error using `onError`.
 
+#### Redirecting step output streams with `stdoutConfig` and `stderrConfig`
+
+This is an alpha feature. The `enable-api-fields` feature flag [must be set to `"alpha"`](./install.md)
+for Redirecting Step Output Streams to function.
+
+This feature defines optional `Step` fields `stdoutConfig` and `stderrConfig` which can be used to redirection the output streams `stdout` and `stderr` respectively:
+
+```yaml
+- name: ...
+  ...
+  stdoutConfig:
+    path: ...
+  stderrConfig:
+    path: ...
+```
+
+Once `stdoutConfig.path` or `stderrConfig.path` is specified, the corresponding output stream will be duplicated to both the given file and the standard output stream of the container, so users can still view the output through the Pod log API. If both `stdoutConfig.path` and `stderrConfig.path` are set to the same value, outputs from both streams will be interleaved in the same file, but there will be no ordering guarantee on the data. If multiple `Step`'s `stdoutConfig.path` fields are set to the same value, the file content will be overwritten by the last outputting step.
+
+Variable substitution will be applied to the new fields, so one could specify `$(results.<name>.path)` to the `stdoutConfig.path` or `stderrConfig.path` field to extract the stdout of a step into a Task result.
+
+##### Example Usage
+
+Redirecting stdout of `boskosctl` to `jq` and publish the resulting `project-id` as a Task result:
+
+```yaml
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: boskos-acquire
+spec:
+  results:
+  - name: project-id
+  steps:
+  - name: boskosctl
+    image: gcr.io/k8s-staging-boskos/boskosctl
+    args:
+    - acquire
+    - --server-url=http://boskos.test-pods.svc.cluster.local
+    - --owner-name=christie-test-boskos
+    - --type=gke-project
+    - --state=free
+    - --target-state=busy
+    stdoutConfig:
+      path: /data/boskosctl-stdout
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  - name: parse-project-id
+    image: imega/jq
+    args:
+    - -r
+    - .name
+    - /data/boskosctl-stdout
+    stdoutConfig:
+      path: $(results.project-id.path)
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+  ```
+
+> NOTE:
+>
+> - If the intent is to share output between `Step`s via a file, the user must ensure that the paths provided are shared between the `Step`s (e.g via `volumes`).
+> - There is currently a limit on the overall size of the `Task` results. If the stdout/stderr of a step is set to the path of a `Task` result and the step prints too many data, the result manifest would become too large. Currently the entrypoint binary will fail if that happens.
+> - If the stdout/stderr of a `Step` is set to the path of a `Task` result, e.g. `$(results.empty.path)`, but that result is not defined for the `Task`, the `Step` will run but the output will be captured in a file named `$(results.empty.path)` in the current working directory. Similarly, any stubstition that is not valid, e.g. `$(some.invalid.path)/out.txt`, will be left as-is and will result in a file path `$(some.invalid.path)/out.txt` relative to the current working directory.
+
+#### Guarding `Step` execution using `when` expressions
+
+You can define `when` in a `step` to control its execution. 
+
+The components of `when` expressions are `input`, `operator`, `values`, `cel`:
+
+| Component  | Description                                                                                                                                                                                                                                                      | Syntax                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `input`    | Input for the `when` expression, defaults to an empty string if not provided.                                                                                                                                                                                    | * Static values e.g. `"ubuntu"`<br/> * Variables (parameters or results) e.g. `"$(params.image)"` or `"$(tasks.task1.results.image)"` or `"$(tasks.task1.results.array-results[1])"`                                                                                                                                                                                                                                                                                                                                                       |
+| `operator` | `operator` represents an `input`'s relationship to a set of `values`, a valid `operator` must be provided.                                                                                                                                                       | `in` or `notin`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `values`   | An array of string values, the `values` array must be provided and has to be non-empty.                                                                                                                                                                          | * An array param e.g. `["$(params.images[*])"]`<br/> * An array result of a task `["$(tasks.task1.results.array-results[*])"]`<br/> * An array result of a step`["(steps.step1.results.array-results[*])"]`<br/>* `values` can contain static values e.g. `"ubuntu"`<br/> * `values` can contain variables (parameters or results) or a Workspaces's `bound` state e.g. `["$(params.image)"]` or `["$(steps.step1.results.image)"]` or `["$(tasks.task1.results.array-results[1])"]` or `["$(steps.step1.results.array-results[1])"]` |
+| `cel`      | The Common Expression Language (CEL) implements common semantics for expression evaluation, enabling different applications to more easily interoperate. This is an `alpha` feature, `enable-cel-in-whenexpression` needs to be set to true to use this feature. |  [cel-syntax](https://github.com/google/cel-spec/blob/master/doc/langdef.md#syntax)
+
+The below example shows how to use when expressions to control step executions:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: my-pvc-2
+spec:
+  resources:
+    requests:
+      storage: 5Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+---
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: step-when-example
+spec:
+  workspaces:
+    - name: custom
+      persistentVolumeClaim:
+        claimName: my-pvc-2
+  taskSpec:
+    description: |
+      A simple task that shows how to use when determine if a step should be executed
+    steps:
+      - name: should-execute
+        image: bash:latest
+        script: |
+          #!/usr/bin/env bash
+          echo "executed..."
+        when:
+          - input: "$(workspaces.custom.bound)"
+            operator: in
+            values: [ "true" ]
+      - name: should-skip
+        image: bash:latest
+        script: |
+          #!/usr/bin/env bash
+          echo skipskipskip
+        when:
+          - input: "$(workspaces.custom2.bound)"
+            operator: in
+            values: [ "true" ]
+      - name: should-continue
+        image: bash:latest
+        script: |
+          #!/usr/bin/env bash
+          echo blabalbaba
+      - name: produce-step
+        image: alpine
+        results:
+          - name: result2
+            type: string
+        script: |
+          echo -n "foo" | tee $(step.results.result2.path)
+      - name: run-based-on-step-results
+        image: alpine
+        script: |
+          echo "wooooooo"
+        when:
+          - input: "$(steps.produce-step.results.result2)"
+            operator: in
+            values: [ "bar" ]
+    workspaces:
+      - name: custom
+```
+
+The StepState for a skipped step looks like something similar to the below:
+```yaml
+      {
+        "container": "step-run-based-on-step-results",
+        "imageID": "docker.io/library/alpine@sha256:c5b1261d6d3e43071626931fc004f70149baeba2c8ec672bd4f27761f8e1ad6b",
+        "name": "run-based-on-step-results",
+        "terminated": {
+          "containerID": "containerd://bf81162e79cf66a2bbc03e3654942d3464db06ff368c0be263a8a70f363a899b",
+          "exitCode": 0,
+          "finishedAt": "2024-03-26T03:57:47Z",
+          "reason": "Completed",
+          "startedAt": "2024-03-26T03:57:47Z"
+        },
+        "terminationReason": "Skipped"
+      }
+```
+Where `terminated.exitCode` is `0` and `terminationReason` is `Skipped` to indicate the Step exited successfully and was skipped. 
+
 ### Specifying `Parameters`
 
 You can specify parameters, such as compilation flags or artifact names, that you want to supply to the `Task` at execution time.
  `Parameters` are passed to the `Task` from its corresponding `TaskRun`.
 
-Parameter names:
-
-- Must only contain alphanumeric characters, hyphens (`-`), underscores (`_`), and dots (`.`).
+#### Parameter name
+Parameter name format:
+- Must only contain alphanumeric characters, hyphens (`-`), underscores (`_`), and dots (`.`). However, `object` parameter name and its key names can't contain dots (`.`). See the reasons in the third item added in this [PR](https://github.com/tektoncd/community/pull/711).
 - Must begin with a letter or an underscore (`_`).
 
-For example, `foo.Is-Bar_` is a valid parameter name, but `barIsBa$` or `0banana` are not.
+For example, `foo.Is-Bar_` is a valid parameter name for string or array type, but is invalid for object parameter because it contains dots. On the other hand, `barIsBa$` or `0banana` are invalid for all types.
 
-> NOTE: 
+> NOTE:
 > 1. Parameter names are **case insensitive**. For example, `APPLE` and `apple` will be treated as equal. If they appear in the same TaskSpec's params, it will be rejected as invalid.
 > 2. If a parameter name contains dots (.), it must be referenced by using the [bracket notation](#substituting-parameters-and-resources) with either single or double quotes i.e. `$(params['foo.bar'])`, `$(params["foo.bar"])`. See the following example for more information.
 
-Each declared parameter has a `type` field, which can be set to either `array` or `string`. `array` is useful in cases where the number
-of compilation flags being supplied to a task varies throughout the `Task's` execution. If not specified, the `type` field defaults to
-`string`. When the actual parameter value is supplied, its parsed type is validated against the `type` field.
+#### Parameter type
+Each declared parameter has a `type` field, which can be set to `string`, `array` or `object`.
 
-The following example illustrates the use of `Parameters` in a `Task`. The `Task` declares two input parameters named `flags`
-(of type `array`) and `someURL` (of type `string`), and uses them in the `steps.args` list. You can expand parameters of type `array`
-inside an existing array using the star operator. In this example, `flags` contains the star operator: `$(params.flags[*])`.
+##### `object` type
+
+`object` type is useful in cases where users want to group related parameters. For example, an object parameter called `gitrepo` can contain both the `url` and the `commmit` to group related information:
+
+```yaml
+spec:
+  params:
+    - name: gitrepo
+      type: object
+      properties:
+        url:
+          type: string
+        commit:
+          type: string
+```
+
+Refer to the [TaskRun example](../examples/v1/taskruns/object-param-result.yaml) and the [PipelineRun example](../examples/v1/pipelineruns/pipeline-object-param-and-result.yaml) in which `object` parameters are demonstrated.
+
+  > NOTE:
+  > - `object` param must specify the `properties` section to define the schema i.e. what keys are available for this object param. See how to define `properties` section in the following example and the [TEP-0075](https://github.com/tektoncd/community/blob/main/teps/0075-object-param-and-result-types.md#defaulting-to-string-types-for-values).
+  > - When providing value for an `object` param, one may provide values for just a subset of keys in spec's `default`, and provide values for the rest of keys at runtime ([example](../examples/v1/taskruns/object-param-result.yaml)).
+  > - When using object in variable replacement, users can only access its individual key ("child" member) of the object by its name i.e. `$(params.gitrepo.url)`. Using an entire object as a value is only allowed when the value is also an object like [this example](../examples/v1/pipelineruns/pipeline-object-param-and-result.yaml). See more details about using object param from the [TEP-0075](https://github.com/tektoncd/community/blob/main/teps/0075-object-param-and-result-types.md#using-objects-in-variable-replacement).
+
+##### `array` type
+
+`array` type is useful in cases where the number of compilation flags being supplied to a task varies throughout the `Task's` execution.
+`array` param can be defined by setting `type` to `array`.  Also, `array` params only supports `string` array i.e.
+each array element has to be of type `string`.
+
+```yaml
+spec:
+  params:
+    - name: flags
+      type: array
+```
+
+##### `string` type
+
+If not specified, the `type` field defaults to `string`. When the actual parameter value is supplied, its parsed type is validated against the `type` field.
+
+The following example illustrates the use of `Parameters` in a `Task`. The `Task` declares 3 input parameters named `gitrepo` (of type `object`), `flags`
+(of type `array`) and `someURL` (of type `string`). These parameters are used in the `steps.args` list
+  - For `object` parameter, you can only use individual members (aka keys).
+  - You can expand parameters of type `array` inside an existing array using the star operator. In this example, `flags` contains the star operator: `$(params.flags[*])`.
 
 **Note:** Input parameter values can be used as variables throughout the `Task` by using [variable substitution](#using-variable-substitution).
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: Task
 metadata:
   name: task-with-parameters
 spec:
   params:
+    - name: gitrepo
+      type: object
+      properties:
+        url:
+          type: string
+        commit:
+          type: string
     - name: flags
       type: array
     - name: someURL
@@ -478,10 +742,13 @@ spec:
     - name: foo.bar
       description: "the name contains dot character"
       default: "test"
-  results:
-    - name: echo-output
-      description: "successful echo"
   steps:
+    - name: do-the-clone
+      image: some-git-image
+      args: [
+        "-url=$(params.gitrepo.url)",
+        "-revision=$(params.gitrepo.commit)"
+      ]
     - name: build
       image: my-builder
       args: [
@@ -494,15 +761,16 @@ spec:
       ]
     - name: echo-param
       image: bash
-      script: |
-        set -e
-        echo $(params["foo.bar"]) | tee $(results.echo-output.path)
+      args: [
+        "echo",
+        "$(params['foo.bar'])",
+      ]
 ```
 
-The following `TaskRun` supplies a dynamic number of strings within the `flags` parameter:
+The following `TaskRun` supplies the value for the parameter `gitrepo`, `flags` and `someURL`:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: TaskRun
 metadata:
   name: run-with-parameters
@@ -510,6 +778,10 @@ spec:
   taskRef:
     name: task-with-parameters
   params:
+    - name: gitrepo
+      value:
+        url: "abc.com"
+        commit: "c12b72"
     - name: flags
       value:
         - "--set"
@@ -520,12 +792,13 @@ spec:
       value: "http://google.com"
 ```
 
+#### Default value
 Parameter declarations (within Tasks and Pipelines) can include default values which will be used if the parameter is
 not specified, for example to specify defaults for both string params and array params
-([full example](../examples/v1beta1/taskruns/array-default.yaml)) :
+([full example](../examples/v1/taskruns/array-default.yaml)) :
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: Task
 metadata:
   name: task-with-array-default
@@ -540,68 +813,32 @@ spec:
         - "--someotherflag"
 ```
 
-### Specifying `Resources`
+#### Param enum
+> :seedling: **`enum` is an [alpha](additional-configs.md#alpha-features) feature.** The `enable-param-enum` feature flag must be set to `"true"` to enable this feature.
 
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+Parameter declarations can include `enum` which is a predefine set of valid values that can be accepted by the `Param`. If a `Param` has both `enum` and default value, the default value must be in the `enum` set. For example, the valid/allowed values for `Param` "message" is bounded to `v1`, `v2` and `v3`:
 
-A `Task` definition can specify input and output resources supplied by
-a [`PipelineResources`](resources.md#using-resources) entity.
-
-Use the `input` field to supply your `Task` with the context and/or data it needs to execute.
-If the output of your `Task` is also the input of the next `Task` that executes, you must
-make that data available to that `Task` at `/workspace/output/resource_name/`. For example:
-
-```yaml
-resources:
-  outputs:
-    name: storage-gcs
-    type: gcs
-steps:
-  - image: objectuser/run-java-jar #https://hub.docker.com/r/objectuser/run-java-jar/
-    command: [jar]
-    args: ["-cvf", "-o", "/workspace/output/storage-gcs/", "projectname.war", "*"]
-    env:
-      - name: "FOO"
-        value: "world"
+``` yaml
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: param-enum-demo
+spec:
+  params:
+  - name: message
+    type: string
+    enum: ["v1", "v2", "v3"]
+    default: "v1"
+  steps:
+  - name: build
+    image: bash:latest
+    script: |
+      echo "$(params.message)"
 ```
 
-**Note**: If the `Task` relies on output resource functionality then the
-containers in the `Task's` `steps` field cannot mount anything in the path
-`/workspace/output`.
+If the `Param` value passed in by `TaskRuns` is **NOT** in the predefined `enum` list, the `TaskRuns` will fail with reason `InvalidParamValue`.
 
-In the following example, the `tar-artifact` resource is used as both input and
-output. Thus, the input resource is copied into the `customworkspace` directory,
-as specified in the `targetPath` field. The `untar` `Step` extracts the tarball
-into the `tar-scratch-space` directory. The `edit-tar` `Step` adds a new file,
-and the `tar-it-up` `Step` creates a new tarball and places it in the
-`/workspace/customworkspace/` directory. When the `Task` completes execution,
-it places the resulting tarball in the `/workspace/customworkspace` directory
-and uploads it to the bucket defined in the `tar-artifact` field.
-
-```yaml
-resources:
-  inputs:
-    name: tar-artifact
-    targetPath: customworkspace
-  outputs:
-    name: tar-artifact
-steps:
-  - name: untar
-    image: ubuntu
-    command: ["/bin/bash"]
-    args: ["-c", "mkdir -p /workspace/tar-scratch-space/ && tar -xvf /workspace/customworkspace/rules_docker-master.tar -C /workspace/tar-scratch-space/"]
-  - name: edit-tar
-    image: ubuntu
-    command: ["/bin/bash"]
-    args: ["-c", "echo crazy > /workspace/tar-scratch-space/rules_docker-master/crazy.txt"]
-  - name: tar-it-up
-    image: ubuntu
-    command: ["/bin/bash"]
-    args: ["-c", "cd /workspace/tar-scratch-space/ && tar -cvf /workspace/customworkspace/rules_docker-master.tar rules_docker-master"]
-```
+See usage in this [example](../examples/v1/taskruns/alpha/param-enum.yaml)
 
 ### Specifying `Workspaces`
 
@@ -625,7 +862,11 @@ spec:
 ```
 
 For more information, see [Using `Workspaces` in `Tasks`](workspaces.md#using-workspaces-in-tasks)
-and the [`Workspaces` in a `TaskRun`](../examples/v1beta1/taskruns/workspace.yaml) example YAML file.
+and the [`Workspaces` in a `TaskRun`](../examples/v1/taskruns/workspace.yaml) example YAML file.
+
+### Propagated `Workspaces`
+
+Workspaces can be propagated to embedded task specs, not referenced Tasks. For more information, see [Propagated Workspaces](taskruns.md#propagated-workspaces).
 
 ### Emitting `Results`
 
@@ -636,23 +877,15 @@ cloned commit SHA as a result, the [`generate-build-id` Task](https://github.com
 emits a randomized ID as a result, and the [`kaniko` Task](https://github.com/tektoncd/catalog/tree/main/task/kaniko/0.1)
 emits a container image digest as a result. In each case these results convey information for users to see when
 looking at their TaskRuns and can also be used in a Pipeline to pass data along from one Task to the next.
+`Task` results are best suited for holding small amounts of data, such as commit SHAs, branch names,
+ephemeral namespaces, and so on.
 
-To define a `Task's` results, use the `results` field. Each `results` entry in the `Task's` YAML corresponds to a
-file that the `Task` should stores the result in. These files should be created by a `Task` in the
-`/tekton/results` directory. The directory itself is created automatically if the `Task` has
-a `results` field but it's the responsibility of the `Task` to generate its contents.
-
-It's important to note that Tekton does not perform any processing on the contents of results; they are emitted
-verbatim from your Task including any leading or trailing whitespace characters. Make sure to write only the
-precise string you want returned from your `Task` into the `/tekton/results/` files that your `Task` creates.
-You can use [`$(results.name.path)`](https://github.com/tektoncd/pipeline/blob/main/docs/variables.md#variables-available-in-a-task)
-to avoid having to hardcode this path.
-
+To define a `Task's` results, use the `results` field.
 In the example below, the `Task` specifies two files in the `results` field:
 `current-date-unix-timestamp` and `current-date-human-readable`.
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: Task
 metadata:
   name: print-date
@@ -678,15 +911,207 @@ spec:
         date | tee $(results.current-date-human-readable.path)
 ```
 
-The stored results can be used [at the `Task` level](./pipelines.md#configuring-execution-results-at-the-task-level)
-or [at the `Pipeline` level](./pipelines.md#configuring-execution-results-at-the-pipeline-level).
+In this example, [`$(results.name.path)`](https://github.com/tektoncd/pipeline/blob/main/docs/variables.md#variables-available-in-a-task)
+is replaced with the path where Tekton will store the Task's results.
 
-**Note:** The maximum size of a `Task's` results is limited by the container termination message feature of Kubernetes,
-as results are passed back to the controller via this mechanism. At present, the limit is
-["4096 bytes"](https://github.com/kubernetes/kubernetes/blob/96e13de777a9eb57f87889072b68ac40467209ac/pkg/kubelet/container/runtime.go#L632).
-Results are written to the termination message encoded as JSON objects and Tekton uses those objects
-to pass additional information to the controller. As such, `Task` results are best suited for holding
-small amounts of data, such as commit SHAs, branch names, ephemeral namespaces, and so on.
+When this Task is executed in a TaskRun, the results will appear in the TaskRun's status:
+
+
+{{< tabs >}}
+{{% tab header="v1" %}}
+```yaml
+apiVersion: tekton.dev/v1
+kind: TaskRun
+# ...
+status:
+  # ...
+  results:
+    - name: current-date-human-readable
+      value: |
+        Wed Jan 22 19:47:26 UTC 2020
+    - name: current-date-unix-timestamp
+      value: |
+        1579722445
+```
+{{% /tab %}}
+
+{{% tab header="v1beta1" %}}
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+# ...
+status:
+  # ...
+  taskResults:
+    - name: current-date-human-readable
+      value: |
+        Wed Jan 22 19:47:26 UTC 2020
+    - name: current-date-unix-timestamp
+      value: |
+        1579722445
+```
+{{% /tab %}}
+{{< /tabs >}}
+
+Tekton does not perform any processing on the contents of results; they are emitted
+verbatim from your Task including any leading or trailing whitespace characters. Make sure to write only the
+precise string you want returned from your `Task` into the result files that your `Task` creates.
+
+The stored results can be used [at the `Task` level](./pipelines.md#passing-one-tasks-results-into-the-parameters-or-when-expressions-of-another)
+or [at the `Pipeline` level](./pipelines.md#emitting-results-from-a-pipeline).
+
+> **Note** Tekton does not enforce Task results unless there is a consumer: when a Task declares a result,
+> it may complete successfully even if no result was actually produced. When a Task that declares results is
+> used in a Pipeline, and a component of the Pipeline attempts to consume the Task's result, if the result
+> was not produced the pipeline will fail. [TEP-0048](https://github.com/tektoncd/community/blob/main/teps/0048-task-results-without-results.md)
+> propopses introducing default values for results to help Pipeline authors manage this case.
+
+#### Emitting Object `Results`
+Emitting a task result of type `object` is implemented based on the
+[TEP-0075](https://github.com/tektoncd/community/blob/main/teps/0075-object-param-and-result-types.md#emitting-object-results).
+You can initialize `object` results from a `task` using JSON escaped string. For example, to assign the following data to an object result:
+
+```
+{"url":"abc.dev/sampler","digest":"19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791"}
+```
+
+You will need to use escaped JSON to write to pod termination message:
+
+```
+{\"url\":\"abc.dev/sampler\",\"digest\":\"19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791\"}
+```
+
+An example of a task definition producing an object result:
+
+```yaml
+kind: Task
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+metadata:
+  name: write-object
+  annotations:
+    description: |
+      A simple task that writes object
+spec:
+  results:
+    - name: object-results
+      type: object
+      description: The object results
+      properties:
+        url:
+          type: string
+        digest:
+          type: string
+  steps:
+    - name: write-object
+      image: bash:latest
+      script: |
+        #!/usr/bin/env bash
+        echo -n "{\"url\":\"abc.dev/sampler\",\"digest\":\"19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791\"}" | tee $(results.object-results.path)
+```
+
+> **Note:**
+> -  that the opening and closing braces  are mandatory along with an escaped JSON.
+> - object result must specify the `properties` section to define the schema i.e. what keys are available for this object result. Failing to emit keys from the defined object results will result in validation error at runtime.
+
+#### Emitting Array `Results`
+
+Tekton Task also supports defining a result of type `array` and `object` in addition to `string`.
+Emitting a task result of type `array` is a `beta` feature implemented based on the
+[TEP-0076](https://github.com/tektoncd/community/blob/main/teps/0076-array-result-types.md#emitting-array-results).
+You can initialize `array` results from a `task` using JSON escaped string, for example, to assign the following
+list of animals to an array result:
+
+```
+["cat", "dog", "squirrel"]
+```
+
+You will have to initialize the pod termination message as escaped JSON:
+
+```
+[\"cat\", \"dog\", \"squirrel\"]
+```
+
+An example of a task definition producing an array result with such greetings `["hello", "world"]`:
+
+```yaml
+kind: Task
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+metadata:
+  name: write-array
+  annotations:
+    description: |
+      A simple task that writes array
+spec:
+  results:
+    - name: array-results
+      type: array
+      description: The array results
+  steps:
+    - name: write-array
+      image: bash:latest
+      script: |
+        #!/usr/bin/env bash
+        echo -n "[\"hello\",\"world\"]" | tee $(results.array-results.path)
+```
+
+**Note** that the opening and closing square brackets are mandatory along with an escaped JSON.
+
+Now, similar to the Go zero-valued slices, an array result is considered as uninitialized (i.e. `nil`) if it's set to an empty
+array i.e. `[]`. For example, `echo -n "[]" |  tee $(results.result.path);` is equivalent to `result := []string{}`.
+The result initialized in this way will have zero length. And trying to access this array with a star notation i.e.
+`$(tasks.write-array-results.results.result[*])` or an element of such array i.e. `$(tasks.write-array-results.results.result[0])`
+results in `InvalidTaskResultReference` with `index out of range`.
+
+Depending on your use case, you might have to initialize a result array to the desired length just like using `make()` function in Go.
+`make()` function is used to allocate an array and returns a slice of the specified length i.e.
+`result := make([]string, 5)` results in `["", "", "", "", ""]`, similarly set the array result to following JSON escaped
+expression to allocate an array of size 2:
+
+```
+echo -n "[\"\", \"\"]" | tee $(results.array-results.path) # an array of size 2 with empty string
+echo -n "[\"first-array-element\", \"\"]" | tee $(results.array-results.path) # an array of size 2 with only first element initialized
+echo -n "[\"\", \"second-array-element\"]" | tee $(results.array-results.path) # an array of size 2 with only second element initialized
+echo -n "[\"first-array-element\", \"second-array-element\"]" | tee $(results.array-results.path) # an array of size 2 with both elements initialized
+```
+
+This is also important to maintain the order of the elements in an array. The order in which the task result was
+initialized is the order in which the result is consumed by the dependent tasks. For example, a task is producing
+two array results `images` and `configmaps`. The pipeline author can implement deployment by indexing into each array result:
+
+```yaml
+    - name: deploy-stage-1
+      taskRef:
+        name: deploy
+      params:
+        - name: image
+          value: $(tasks.setup.results.images[0])
+        - name: configmap
+          value: $(tasks.setup.results.configmap[0])
+      ...
+    - name: deploy-stage-2
+      taskRef:
+        name: deploy
+      params:
+        - name: image
+          value: $(tasks.setup.results.images[1])
+        - name: configmap
+          value: $(tasks.setup.results.configmap[1])
+```
+
+As a task author, make sure the task array results are initialized accordingly or set to a zero value in case of no
+`image` or `configmap` to maintain the order.
+
+**Note**: Tekton uses [termination
+messages](https://kubernetes.io/docs/tasks/debug/debug-application/determine-reason-pod-failure/#writing-and-reading-a-termination-message). As
+written in
+[tektoncd/pipeline#4808](https://github.com/tektoncd/pipeline/issues/4808),
+the maximum size of a `Task's` results is limited by the container termination message feature of Kubernetes.
+At present, the limit is ["4096 bytes"](https://github.com/kubernetes/kubernetes/blob/96e13de777a9eb57f87889072b68ac40467209ac/pkg/kubelet/container/runtime.go#L632).
+This also means that the number of Steps in a Task affects the maximum size of a Result,
+as each Step is implemented as a container in the TaskRun's pod.
+The more containers we have in our pod, *the smaller the allowed size of each container's
+message*, meaning that the **more steps you have in a Task, the smaller the result for each step can be**.
+For example, if you have 10 steps, the size of each step's Result will have a maximum of less than 1KB.
 
 If your `Task` writes a large number of small results, you can work around this limitation
 by writing each result from a separate `Step` so that each `Step` has its own termination message.
@@ -697,6 +1122,29 @@ available size will less than 4096 bytes.
 
 As a general rule-of-thumb, if a result needs to be larger than a kilobyte, you should likely use a
 [`Workspace`](#specifying-workspaces) to store and pass it between `Tasks` within a `Pipeline`.
+
+#### Larger `Results` using sidecar logs
+
+This is a beta feature which is guarded behind its own feature flag.  The `results-from` feature flag must be set to
+[`"sidecar-logs"`](./install.md#enabling-larger-results-using-sidecar-logs) to enable larger results using sidecar logs.
+
+Instead of using termination messages to store results, the taskrun controller injects a sidecar container which monitors
+the results of all the steps. The sidecar mounts the volume where results of all the steps are stored. As soon as it
+finds a new result, it logs it to std out. The controller has access to the logs of the sidecar container.
+**CAUTION**: we need you to enable access to [kubernetes pod/logs](./install.md#enabling-larger-results-using-sidecar-logs).
+
+This feature allows users to store up to 4 KB per result by default. Because we are not limited by the size of the
+termination messages, users can have as many results as they require (or until the CRD reaches its limit). If the size
+of a result exceeds this limit, then the TaskRun will be placed into a failed state with the following message: `Result
+exceeded the maximum allowed limit.`
+
+**Note**: If you require even larger results, you can specify a different upper limit per result by setting
+`max-result-size` feature flag to your desired size in bytes ([see instructions](./install.md#enabling-larger-results-using-sidecar-logs)).
+**CAUTION**: the larger you make the size, more likely will the CRD reach its max limit enforced by the `etcd` server
+leading to bad user experience.
+
+Refer to the detailed instructions listed in [additional config](additional-configs.md#enabling-larger-results-using-sidecar-logs)
+to learn how to enable this feature.
 
 ### Specifying `Volumes`
 
@@ -722,13 +1170,17 @@ overlap occurs.
 
 In the example below, the `Task` specifies a `stepTemplate` field with the environment variable
 `FOO` set to `bar`. The first `Step` in the `Task` uses that value for `FOO`, but the second `Step`
-overrides the value set in the template with `baz`.
+overrides the value set in the template with `baz`. Additional, the `Task` specifies a `stepTemplate`
+field with the environment variable `TOKEN` set to `public`. The last one `Step` in the `Task` uses
+`private` in the referenced secret to override the value set in the template.
 
 ```yaml
 stepTemplate:
   env:
     - name: "FOO"
       value: "bar"
+    - name: "TOKEN"
+      value: "public"
 steps:
   - image: ubuntu
     command: [echo]
@@ -739,6 +1191,20 @@ steps:
     env:
       - name: "FOO"
         value: "baz"
+  - image: ubuntu
+    command: [echo]
+    args: ["TOKEN is ${TOKEN}"]
+    env:
+      - name: "TOKEN"
+        valueFrom:
+          secretKeyRef:
+            key: "token"
+            name: "test"
+---
+# The secret 'test' part data is as follows.
+data:
+  # The decoded value of 'cHJpdmF0ZQo=' is 'private'.
+  token: "cHJpdmF0ZQo="
 ```
 
 ### Specifying `Sidecars`
@@ -748,6 +1214,11 @@ to run alongside the `Steps` in your `Task`. You can use `Sidecars` to provide a
 [Docker in Docker](https://hub.docker.com/_/docker) or running a mock API server that your app can hit during testing.
 `Sidecars` spin up before your `Task` executes and are deleted after the `Task` execution completes.
 For further information, see [`Sidecars` in `TaskRuns`](taskruns.md#specifying-sidecars).
+
+**Note**: Starting in v0.62 you can enable native Kubernetes sidecar support using the `enable-kubernetes-sidecar` feature flag ([see instructions](./additional-configs.md#customizing-the-pipelines-controller-behavior)). If kubernetes does not wait for your sidecar application to be ready, use a `startupProbe` to help kubernetes identify when it is ready.
+
+Refer to the detailed instructions listed in [additional config](additional-configs.md#enabling-larger-results-using-sidecar-logs)
+to learn how to enable this feature.
 
 In the example below, a `Step` uses a Docker-in-Docker `Sidecar` to build a Docker image:
 
@@ -800,6 +1271,10 @@ If the configured `nop` image contains the exact command the `Sidecar`
 was executing before receiving a "stop" signal, the `Sidecar` keeps
 running, eventually causing the `TaskRun` to time out with an error.
 For more information, see [issue 1347](https://github.com/tektoncd/pipeline/issues/1347).
+
+### Specifying a display name
+
+The `displayName` field is an optional field that allows you to add a user-facing name to the task that may be used to populate a UI.
 
 ### Adding a description
 
@@ -885,6 +1360,37 @@ A valid reference to the `build-args` parameter is isolated and in an eligible f
   args: ["build", "$(params.build-args[*])", "additionalArg"]
 ```
 
+`array` param when referenced in `args` section of the `step` can be utilized in the `script` as command line arguments:
+
+```yaml
+- name: build-step
+  image: gcr.io/cloud-builders/some-image
+  args: ["$(params.flags[*])"]
+  script: |
+    #!/usr/bin/env bash
+    echo "The script received $# flags."
+    echo "The first command line argument is $1."
+```
+
+Indexing into an array to reference an individual array element is supported as an **alpha** feature (`enable-api-fields: alpha`).
+Referencing an individual array element in `args`:
+
+```yaml
+- name: build-step
+  image: gcr.io/cloud-builders/some-image
+  args: ["$(params.flags[0])"]
+```
+
+Referencing an individual array element in `script`:
+
+```yaml
+- name: build-step
+  image: gcr.io/cloud-builders/some-image
+  script: |
+    #!/usr/bin/env bash
+    echo "$(params.flags[0])"
+```
+
 #### Substituting `Workspace` paths
 
 You can substitute paths to `Workspaces` specified within a `Task` as follows:
@@ -945,9 +1451,9 @@ Study the following code examples to better understand how to configure your `Ta
 - [Using a `Secret` as an environment source](#using-a-secret-as-an-environment-source)
 - [Using a `Sidecar` in a `Task`](#using-a-sidecar-in-a-task)
 
-_Tip: See the collection of simple
-[examples](https://github.com/tektoncd/pipeline/tree/main/examples) for
-additional code samples._
+_Tip: See the collection of Tasks in the
+[Tekton community catalog](https://github.com/tektoncd/catalog) for
+more examples.
 
 ### Building and pushing a Docker image
 
@@ -959,32 +1465,26 @@ unsafe** and is shown here only as a demonstration. Use [kaniko](https://github.
 ```yaml
 spec:
   params:
-    # These may be overridden, but provide sensible defaults.
-    - name: directory
-      type: string
-      description: The directory containing the build context.
-      default: /workspace
+    # This may be overridden, but is a sensible default.
     - name: dockerfileName
       type: string
       description: The name of the Dockerfile
       default: Dockerfile
-  resources:
-    inputs:
-      - name: workspace
-        type: git
-    outputs:
-      - name: builtImage
-        type: image
+    - name: image
+      type: string
+      description: The image to build and push
+  workspaces:
+  - name: source
   steps:
     - name: dockerfile-build
       image: gcr.io/cloud-builders/docker
-      workingDir: "$(params.directory)"
+      workingDir: "$(workspaces.source.path)"
       args:
         [
           "build",
           "--no-cache",
           "--tag",
-          "$(resources.outputs.image.url)",
+          "$(params.image)",
           "--file",
           "$(params.dockerfileName)",
           ".",
@@ -995,7 +1495,7 @@ spec:
 
     - name: dockerfile-push
       image: gcr.io/cloud-builders/docker
-      args: ["push", "$(resources.outputs.image.url)"]
+      args: ["push", "$(params.image)"]
       volumeMounts:
         - name: docker-socket
           mountPath: /var/run/docker.sock
@@ -1069,7 +1569,7 @@ spec:
 The example below illustrates how to use a `Secret` as an environment source:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: Task
 metadata:
   name: goreleaser
@@ -1082,15 +1582,12 @@ spec:
       type: string
       description: name of the secret holding the github-token
       default: github-token
-  resources:
-    inputs:
-      - name: source
-        type: git
-        targetPath: src/$(params.package)
+  workspaces:
+  - name: source
   steps:
     - name: release
       image: goreleaser/goreleaser
-      workingDir: /workspace/src/$(params.package)
+      workingDir: $(workspaces.source.path)/$(params.package)
       command:
         - goreleaser
       args:
@@ -1110,7 +1607,7 @@ spec:
 The example below illustrates how to use a `Sidecar` in your `Task`:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: Task
 metadata:
   name: with-sidecar-task
@@ -1183,16 +1680,16 @@ log into the `Pod` and add a `Step` that pauses the `Task` at the desired stage.
 
 ### Running Step Containers as a Non Root User
 
-All steps that do not require to be run as a root user should make use of TaskRun features to 
-designate the container for a step runs as a user without root permissions. As a best practice, 
-running containers as non root should be built into the container image to avoid any possibility 
-of the container being run as root. However, as a further measure of enforcing this practice, 
+All steps that do not require to be run as a root user should make use of TaskRun features to
+designate the container for a step runs as a user without root permissions. As a best practice,
+running containers as non root should be built into the container image to avoid any possibility
+of the container being run as root. However, as a further measure of enforcing this practice,
 steps can make use of a `securityContext` to specify how the container should run.
 
 An example of running Task steps as a non root user is shown below:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: Task
 metadata:
   name: show-non-root-steps
@@ -1217,7 +1714,7 @@ spec:
       securityContext:
         runAsUser: 2000
 ---
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: TaskRun
 metadata:
   generateName: show-non-root-steps-run-
@@ -1230,21 +1727,21 @@ spec:
       runAsUser: 1001
 ```
 
-In the example above, the step `show-user-2000` specifies via a `securityContext` that the container 
-for the step should run as user 2000. A `securityContext` must still be specified via a TaskRun `podTemplate` 
-for this TaskRun to run in a Kubernetes environment that enforces running containers as non root as a requirement. 
+In the example above, the step `show-user-2000` specifies via a `securityContext` that the container
+for the step should run as user 2000. A `securityContext` must still be specified via a TaskRun `podTemplate`
+for this TaskRun to run in a Kubernetes environment that enforces running containers as non root as a requirement.
 
-The `runAsNonRoot` property specified via the `podTemplate` above validates that steps part of this TaskRun are 
-running as non root users and will fail to start any step container that attempts to run as root. Only specifying 
-`runAsNonRoot: true` will not actually run containers as non root as the property simply validates that steps are not 
+The `runAsNonRoot` property specified via the `podTemplate` above validates that steps part of this TaskRun are
+running as non root users and will fail to start any step container that attempts to run as root. Only specifying
+`runAsNonRoot: true` will not actually run containers as non root as the property simply validates that steps are not
 running as root. It is the `runAsUser` property that is actually used to set the non root user ID for the container.
 
-If a step defines its own `securityContext`, it will be applied for the step container over the `securityContext` 
-specified at the pod level via the TaskRun `podTemplate`. 
+If a step defines its own `securityContext`, it will be applied for the step container over the `securityContext`
+specified at the pod level via the TaskRun `podTemplate`.
 
 More information about Pod and Container Security Contexts can be found via the [Kubernetes website](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod).
 
-The example Task/TaskRun above can be found as a [TaskRun example](../examples/v1beta1/taskruns/run-steps-as-non-root.yaml).
+The example Task/TaskRun above can be found as a [TaskRun example](../examples/v1/taskruns/run-steps-as-non-root.yaml).
 
 ## `Task` Authoring Recommendations
 

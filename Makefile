@@ -2,13 +2,15 @@ MODULE   = $(shell env GO111MODULE=on $(GO) list -m)
 DATE    ?= $(shell date +%FT%T%z)
 VERSION ?= $(shell git describe --tags --always --dirty --match=v* 2> /dev/null || \
 			cat $(CURDIR)/.version 2> /dev/null || echo v0)
-PKGS     = $(or $(PKG),$(shell env GO111MODULE=on $(GO) list ./... | grep -v 'github\.com\/tektoncd\/pipeline\/third_party\/'))
+PKGS     = $(or $(PKG),$(shell env GO111MODULE=on $(GO) list ./... ))
 TESTPKGS = $(shell env GO111MODULE=on $(GO) list -f \
 			'{{ if or .TestGoFiles .XTestGoFiles }}{{ .ImportPath }}{{ end }}' \
 			$(PKGS))
 BIN      = $(CURDIR)/.bin
+WOKE 	?= go run -modfile go.mod github.com/get-woke/woke
 
-GOLANGCI_VERSION = v1.42.0
+GOLANGCI_VERSION := $(shell yq '.jobs.linting.steps[] | select(.name == "golangci-lint") | .with.version' .github/workflows/ci.yaml)
+WOKE_VERSION     = v0.19.0
 
 GO           = go
 TIMEOUT_UNIT = 5m
@@ -81,9 +83,10 @@ vendor:
 	$Q ./hack/update-deps.sh
 
 ## Tests
-TEST_UNIT_TARGETS := test-unit-verbose test-unit-race
-test-unit-verbose: ARGS=-v
-test-unit-race:    ARGS=-race
+TEST_UNIT_TARGETS := test-unit-verbose test-unit-race test-unit-verbose-and-race
+test-unit-verbose:          ARGS=-v
+test-unit-race:             ARGS=-race
+test-unit-verbose-and-race: ARGS=-v -race
 $(TEST_UNIT_TARGETS): test-unit
 .PHONY: $(TEST_UNIT_TARGETS) test-unit
 test-unit: ## Run unit tests
@@ -162,16 +165,23 @@ $(BIN)/errcheck: PACKAGE=github.com/kisielk/errcheck
 errcheck: | $(ERRCHECK) ; $(info $(M) running errcheck…) ## Run errcheck
 	$Q $(ERRCHECK) ./...
 
-GOLANGCILINT = $(BIN)/golangci-lint
-$(BIN)/golangci-lint: ; $(info $(M) getting golangci-lint $(GOLANGCI_VERSION))
-	cd tools; GOBIN=$(BIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_VERSION)
+GOLANGCILINT = $(BIN)/golangci-lint-$(GOLANGCI_VERSION)
+$(BIN)/golangci-lint-$(GOLANGCI_VERSION): ; $(info $(M) getting golangci-lint $(GOLANGCI_VERSION))
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(BIN) $(GOLANGCI_VERSION)
+	mv $(BIN)/golangci-lint $(BIN)/golangci-lint-$(GOLANGCI_VERSION)
 
 .PHONY: golangci-lint
 golangci-lint: | $(GOLANGCILINT) ; $(info $(M) running golangci-lint…) @ ## Run golangci-lint
-	$Q $(GOLANGCILINT) run --modules-download-mode=vendor --max-issues-per-linter=0 --max-same-issues=0 --deadline 5m
+	$Q $(GOLANGCILINT) config verify
+	$Q $(GOLANGCILINT) run --modules-download-mode=vendor --max-issues-per-linter=0 --max-same-issues=0 --timeout 5m
+
+.PHONY: golangci-lint-check
+golangci-lint-check: | $(GOLANGCILINT) ; $(info $(M) Testing if golint has been done…) @ ## Run golangci-lint for build tests CI job
+	$Q $(GOLANGCILINT) run -j 1 --color=never
 
 GOIMPORTS = $(BIN)/goimports
-$(BIN)/goimports: PACKAGE=golang.org/x/tools/cmd/goimports
+$(BIN)/goimports: | $(BIN) ; $(info $(M) building goimports…)
+	GOBIN=$(BIN) go install golang.org/x/tools/cmd/goimports@latest
 
 .PHONY: goimports
 goimports: | $(GOIMPORTS) ; $(info $(M) running goimports…) ## Run goimports
@@ -180,6 +190,14 @@ goimports: | $(GOIMPORTS) ; $(info $(M) running goimports…) ## Run goimports
 .PHONY: fmt
 fmt: ; $(info $(M) running gofmt…) @ ## Run gofmt on all source files
 	$Q $(GO) fmt $(PKGS)
+
+WOKE = $(BIN)/woke
+$(BIN)/woke: ; $(info $(M) getting woke $(WOKE_VERSION))
+	cd tools; GOBIN=$(BIN) go install github.com/get-woke/woke@$(WOKE_VERSION)
+
+.PHONY: woke 
+woke: | $(WOKE) ; $(info $(M) running woke...) @ ## Run woke
+	$Q $(WOKE) -c https://github.com/canonical/Inclusive-naming/raw/main/config.yml
 
 # Misc
 

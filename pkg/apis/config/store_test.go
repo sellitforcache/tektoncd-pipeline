@@ -30,34 +30,57 @@ import (
 func TestStoreLoadWithContext(t *testing.T) {
 	defaultConfig := test.ConfigMapFromTestFile(t, "config-defaults")
 	featuresConfig := test.ConfigMapFromTestFile(t, "feature-flags-all-flags-set")
-	artifactBucketConfig := test.ConfigMapFromTestFile(t, "config-artifact-bucket")
-	artifactPVCConfig := test.ConfigMapFromTestFile(t, "config-artifact-pvc")
 	metricsConfig := test.ConfigMapFromTestFile(t, "config-observability")
+	spireConfig := test.ConfigMapFromTestFile(t, "config-spire")
+	eventsConfig := test.ConfigMapFromTestFile(t, "config-events")
+	tracingConfig := test.ConfigMapFromTestFile(t, "config-tracing")
 
 	expectedDefaults, _ := config.NewDefaultsFromConfigMap(defaultConfig)
 	expectedFeatures, _ := config.NewFeatureFlagsFromConfigMap(featuresConfig)
-	expectedArtifactBucket, _ := config.NewArtifactBucketFromConfigMap(artifactBucketConfig)
-	expectedArtifactPVC, _ := config.NewArtifactPVCFromConfigMap(artifactPVCConfig)
 	metrics, _ := config.NewMetricsFromConfigMap(metricsConfig)
+	expectedSpireConfig, _ := config.NewSpireConfigFromConfigMap(spireConfig)
+	expectedEventsConfig, _ := config.NewEventsFromConfigMap(eventsConfig)
+	expectedTracingConfig, _ := config.NewTracingFromConfigMap(tracingConfig)
 
 	expected := &config.Config{
-		Defaults:       expectedDefaults,
-		FeatureFlags:   expectedFeatures,
-		ArtifactBucket: expectedArtifactBucket,
-		ArtifactPVC:    expectedArtifactPVC,
-		Metrics:        metrics,
+		Defaults:     expectedDefaults,
+		FeatureFlags: expectedFeatures,
+		Metrics:      metrics,
+		SpireConfig:  expectedSpireConfig,
+		Events:       expectedEventsConfig,
+		Tracing:      expectedTracingConfig,
 	}
 
 	store := config.NewStore(logtesting.TestLogger(t))
 	store.OnConfigChanged(defaultConfig)
 	store.OnConfigChanged(featuresConfig)
-	store.OnConfigChanged(artifactBucketConfig)
-	store.OnConfigChanged(artifactPVCConfig)
 	store.OnConfigChanged(metricsConfig)
+	store.OnConfigChanged(spireConfig)
+	store.OnConfigChanged(eventsConfig)
+	store.OnConfigChanged(tracingConfig)
 
 	cfg := config.FromContext(store.ToContext(context.Background()))
 
-	if d := cmp.Diff(cfg, expected); d != "" {
+	if d := cmp.Diff(expected, cfg); d != "" {
+		t.Errorf("Unexpected config %s", diff.PrintWantGot(d))
+	}
+}
+
+func TestStoreLoadWithContext_Empty(t *testing.T) {
+	want := &config.Config{
+		Defaults:     config.DefaultConfig.DeepCopy(),
+		FeatureFlags: config.DefaultFeatureFlags.DeepCopy(),
+		Metrics:      config.DefaultMetrics.DeepCopy(),
+		SpireConfig:  config.DefaultSpire.DeepCopy(),
+		Events:       config.DefaultEvents.DeepCopy(),
+		Tracing:      config.DefaultTracing.DeepCopy(),
+	}
+
+	store := config.NewStore(logtesting.TestLogger(t))
+
+	got := config.FromContext(store.ToContext(context.Background()))
+
+	if d := cmp.Diff(want, got); d != "" {
 		t.Errorf("Unexpected config %s", diff.PrintWantGot(d))
 	}
 }

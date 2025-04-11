@@ -25,9 +25,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tektoncd/pipeline/test/parse"
-
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
+	"github.com/tektoncd/pipeline/test/parse"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
 	"knative.dev/pkg/test/helpers"
@@ -48,29 +47,29 @@ func TestDuplicatePodTaskRun(t *testing.T) {
 	// The number of builds generated has a direct impact on test
 	// runtime and is traded off against proving the taskrun
 	// reconciler's efficacy at not duplicating pods.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		taskrunName := helpers.ObjectNameForTest(t)
 		t.Logf("Creating taskrun %q.", taskrunName)
 
-		taskrun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+		taskrun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   taskSpec:
     steps:
-    - image: busybox
+    - image: mirror.gcr.io/busybox
       command: ['/bin/echo']
       args: ['simple']
 `, taskrunName, namespace))
-		if _, err := c.TaskRunClient.Create(ctx, taskrun, metav1.CreateOptions{}); err != nil {
+		if _, err := c.V1TaskRunClient.Create(ctx, taskrun, metav1.CreateOptions{}); err != nil {
 			t.Fatalf("Error creating taskrun: %v", err)
 		}
-		go func(t *testing.T) {
+		go func(t *testing.T) { //nolint:thelper
 			defer wg.Done()
 
-			if err := WaitForTaskRunState(ctx, c, taskrunName, TaskRunSucceed(taskrunName), "TaskRunDuplicatePodTaskRunFailed"); err != nil {
+			if err := WaitForTaskRunState(ctx, c, taskrunName, TaskRunSucceed(taskrunName), "TaskRunDuplicatePodTaskRunFailed", v1Version); err != nil {
 				t.Errorf("Error waiting for TaskRun to finish: %s", err)
 				return
 			}
